@@ -34,13 +34,19 @@ from matplotlib.ticker import FuncFormatter, MaxNLocator
 from astropy.io import fits
 from pixell import enmap, reproject, utils
 from scipy.ndimage import rotate
+from scipy.interpolate import RectBivariateSpline
 from scipy import spatial
 import h5py
 
+os.environ["PATH"] = (
+    "/usr/local/texlive/2025/bin/universal-darwin:"
+    "/Library/TeX/texbin:"
+    + os.environ.get("PATH", "")
+)
 
 # Use the local LaTeX installation for all text in the figures.
 plt.rcParams.update({
-    "text.usetex": True,
+    "text.usetex": False,
     "font.family": "serif",
     "font.serif": ["Computer Modern Roman"],
     "axes.unicode_minus": False,
@@ -61,7 +67,7 @@ PHOTO_MATCH_ARCSEC   = 1.0
 PHOTO_FRACDEV_THRESH = 0.5
 PHOTO_TYPE_GALAXY    = 3
 BA_MAX               = 1.0
-INTERPOLATION_ORDER = 3
+INTERPOLATION_ORDER = 1
 
 # Orientation and sector settings.
 WEDGE_HALF_DEG   = 45.0
@@ -101,6 +107,7 @@ EBV_MAX = 0.1
 RADIO_ONLY = False
 EXCLUDE_RADIO = True
 FIRST_MATCH_ARCSEC = 60.0
+SAFETY = 1 
 
 # Split settings.
 SPLIT_REMOVE_MIDDLE_PCT = 30.0
@@ -122,7 +129,12 @@ SCHEME_META = {
 }
 
 # Stamp and cache settings.
+# STAMP_RADIUS_ARCMIN is the final plotted/CAP stamp half width.
+# STAMP_SOURCE_RADIUS_ARCMIN is the larger source thumbnail half width used
+# for oriented coordinate-remapping rotations.  sqrt(2) is the geometric
+# no-edge-loss radius for rotating a square output grid by any angle.
 STAMP_RADIUS_ARCMIN = 15.0
+STAMP_SOURCE_RADIUS_ARCMIN = STAMP_RADIUS_ARCMIN * np.sqrt(2.0)
 CACHE_DIR  = "./stamp_cache"
 CACHE_FILE = os.path.join(CACHE_DIR, "stamps.h5")
 EXTRACTION_BATCH_LOG_EVERY = 2000
@@ -455,8 +467,69 @@ def _hi_label(sk):
     return SCHEME_META[sk]["hi"]
 
 
+def _centered_pixel_axis(n, pixscale_arcmin):
+    """Pixel-center coordinates in arcmin, centered on zero."""
+    return (np.arange(n, dtype=np.float64) - 0.5 * (n - 1)) * float(pixscale_arcmin)
+
+
+def sample_large_stamp_to_output(
+    source_stamp,
+    angle_deg,
+    out_ny,
+    out_nx,
+    out_pixscale_arcmin,
+    source_radius_arcmin=STAMP_SOURCE_RADIUS_ARCMIN,
+    fill_value=0.0,
+):
+    """Sample a larger source thumbnail onto the final output grid.
+
+    This is the coordinate-remapping version of rotation, close to the
+    oriented_superclustering/ThumbStack pattern:
+
+        1. keep the final output grid fixed,
+        2. rotate output coordinates backward into the larger source thumbnail,
+        3. bilinearly interpolate the source thumbnail at those coordinates.
+
+    angle_deg follows scipy.ndimage.rotate semantics: positive values rotate
+    the image counterclockwise.  The interpolation is linear because
+    RectBivariateSpline is used with kx=1, ky=1.
+    """
+    src = np.asarray(source_stamp, dtype=np.float64)
+    src_ny, src_nx = src.shape
+
+    src_pixscale_y = 2.0 * float(source_radius_arcmin) / src_ny
+    src_pixscale_x = 2.0 * float(source_radius_arcmin) / src_nx
+
+    y_src = _centered_pixel_axis(src_ny, src_pixscale_y)
+    x_src = _centered_pixel_axis(src_nx, src_pixscale_x)
+
+    y_out = _centered_pixel_axis(out_ny, out_pixscale_arcmin)
+    x_out = _centered_pixel_axis(out_nx, out_pixscale_arcmin)
+    xg_out, yg_out = np.meshgrid(x_out, y_out)
+
+    # Inverse mapping: to create an output image rotated by +angle,
+    # sample the input image at coordinates rotated by -angle.
+    theta = -np.deg2rad(angle_deg)
+    ca = np.cos(theta)
+    sa = np.sin(theta)
+    xg_src = ca * xg_out - sa * yg_out
+    yg_src = sa * xg_out + ca * yg_out
+
+    inside = (
+        (yg_src >= y_src[0]) & (yg_src <= y_src[-1])
+        & (xg_src >= x_src[0]) & (xg_src <= x_src[-1])
+    )
+
+    out = np.full((out_ny, out_nx), fill_value, dtype=np.float64)
+    if np.any(inside):
+        interp = RectBivariateSpline(y_src, x_src, src, kx=1, ky=1)
+        out[inside] = interp(yg_src[inside], xg_src[inside], grid=False)
+
+    return out.astype(np.float32)
+
+
 def rotate_stamp(stamp, angle_deg):
-    """Rotate a stamp counterclockwise by angle_deg."""
+    """Legacy fallback: rotate a same-size stamp with scipy."""
     return rotate(
         stamp,
         angle_deg,
@@ -602,11 +675,11 @@ def compute_cap_values(
     return cap
 
 
-def full_stamp_inside_map(ra_deg, dec_deg, emap, stamp_radius_arcmin):
+def full_stamp_inside_map(ra_deg, dec_deg, emap, STAMP_SOURCE_RADIUS_ARCMIN):
     """Check that the full thumbnail footprint stays inside the map."""
     dec_rad = np.deg2rad(dec_deg)
     ra_rad = np.deg2rad(ra_deg)
-    r_rad = np.full(len(ra_deg), np.deg2rad(stamp_radius_arcmin / 60.0))
+    r_rad = np.full(len(ra_deg), np.deg2rad(STAMP_SOURCE_RADIUS_ARCMIN / 60.0))
     keep = np.ones(len(ra_deg), dtype=bool)
 
     offsets_dec = np.array([-1, -1, -1, 0, 0, 1, 1, 1], dtype=np.float64)
@@ -780,9 +853,11 @@ def crossmatch_to_first(ra, dec, first_path, match_arcsec, safety=1):
 
 def _extraction_config_dict():
     return {
-        "cache_version": "four_summary_figures_only_v1",
+        "cache_version": "large_source_coordinate_remap_v1",
         "tsz_map_path": TSZ_MAP_PATH,
         "stamp_radius_arcmin": STAMP_RADIUS_ARCMIN,
+        "stamp_source_radius_arcmin": float(STAMP_SOURCE_RADIUS_ARCMIN),
+        "rotation_method": "large_source_rectbivariatespline_k1",
     }
 
 
@@ -791,7 +866,7 @@ def _extraction_config_hash():
     return hashlib.sha256(json.dumps(cfg, sort_keys=True).encode()).hexdigest()[:16]
 
 
-def _open_or_create_cache(cache_path, ny, nx, config_hash):
+def _open_or_create_cache(cache_path, ny, nx, ny_src, nx_src, config_hash):
     os.makedirs(os.path.dirname(cache_path), exist_ok=True)
 
     if os.path.exists(cache_path):
@@ -801,7 +876,7 @@ def _open_or_create_cache(cache_path, ny, nx, config_hash):
             print("  [cache] Config hash mismatch, rebuilding cache.")
             h5f.close()
             os.remove(cache_path)
-            return _open_or_create_cache(cache_path, ny, nx, config_hash)
+            return _open_or_create_cache(cache_path, ny, nx, ny_src, nx_src, config_hash)
         existing_ids = set(h5f["fits_idx"][:].tolist())
         print(f"  [cache] Opened existing cache with {len(existing_ids):,} galaxies")
         return h5f, existing_ids
@@ -812,6 +887,10 @@ def _open_or_create_cache(cache_path, ny, nx, config_hash):
     h5f.attrs["config_json"] = json.dumps(_extraction_config_dict(), sort_keys=True)
     h5f.attrs["ny"] = ny
     h5f.attrs["nx"] = nx
+    h5f.attrs["ny_src"] = ny_src
+    h5f.attrs["nx_src"] = nx_src
+    h5f.attrs["stamp_radius_arcmin"] = float(STAMP_RADIUS_ARCMIN)
+    h5f.attrs["stamp_source_radius_arcmin"] = float(STAMP_SOURCE_RADIUS_ARCMIN)
 
     scalar_keys = [
         "fits_idx", "ra", "dec", "z", "logm", "pa", "ab",
@@ -830,8 +909,8 @@ def _open_or_create_cache(cache_path, ny, nx, config_hash):
 
     h5f.create_dataset(
         "stamps",
-        shape=(0, ny, nx),
-        maxshape=(None, ny, nx),
+        shape=(0, ny_src, nx_src),
+        maxshape=(None, ny_src, nx_src),
         dtype=np.float32,
         chunks=(1, ny, nx),
         compression="gzip",
@@ -919,8 +998,8 @@ def _append_to_cache(
 
 def extract_to_cache(comptony, h5f):
     n_total = h5f["fits_idx"].shape[0]
-    ny = int(h5f.attrs["ny"])
-    nx = int(h5f.attrs["nx"])
+    ny_src = int(h5f.attrs.get("ny_src", h5f.attrs["ny"]))
+    nx_src = int(h5f.attrs.get("nx_src", h5f.attrs["nx"]))
     attempted = h5f["extract_attempted"][:]
     n_todo = int((~attempted).sum())
 
@@ -931,7 +1010,7 @@ def extract_to_cache(comptony, h5f):
     print(f"  [extract] {n_todo:,} galaxies to extract")
     ra_all = h5f["ra"][:]
     dec_all = h5f["dec"][:]
-    r_rad = STAMP_RADIUS_ARCMIN * np.pi / 180.0 / 60.0
+    r_rad = STAMP_SOURCE_RADIUS_ARCMIN * np.pi / 180.0 / 60.0
 
     t0 = time.time()
     n_done = 0
@@ -951,9 +1030,9 @@ def extract_to_cache(comptony, h5f):
             continue
 
         arr = np.array(stamp, dtype=np.float32)
-        if arr.shape != (ny, nx):
-            arr = arr[:ny, :nx]
-        if arr.shape != (ny, nx) or np.all(arr == 0):
+        if arr.shape != (ny_src, nx_src):
+            arr = arr[:ny_src, :nx_src]
+        if arr.shape != (ny_src, nx_src) or np.all(arr == 0):
             h5f["stamp_valid"][i] = False
             n_done += 1
             continue
@@ -979,7 +1058,12 @@ def extract_to_cache(comptony, h5f):
 # ============================================================
 
 def stack_from_cache(h5f, mask, label=""):
-    """Unweighted stack for a selected mask."""
+    """Unweighted stack for a selected mask.
+
+    Cached stamps are larger source thumbnails.  Each selected source
+    thumbnail is sampled onto the final output grid, once with angle 0 for
+    the unoriented stack and once with -PA for the oriented stack.
+    """
     ny = int(h5f.attrs["ny"])
     nx = int(h5f.attrs["nx"])
 
@@ -1026,12 +1110,27 @@ def stack_from_cache(h5f, mask, label=""):
     t0 = time.time()
 
     for j, cache_idx in enumerate(indices):
-        stamp = np.asarray(h5f["stamps"][cache_idx], dtype=np.float32)
+        source_stamp = np.asarray(h5f["stamps"][cache_idx], dtype=np.float32)
         pa_j = float(pa_all[cache_idx])
 
-        stack_sum_unori += stamp.astype(np.float64)
+        # Same coordinate-remapping sampler for both cases.  Angle 0 gives
+        # the central final-size thumbnail from the larger source stamp.
+        stamp = sample_large_stamp_to_output(
+            source_stamp,
+            0.0,
+            ny,
+            nx,
+            pixscale,
+        )
+        stamp_rot = sample_large_stamp_to_output(
+            source_stamp,
+            -pa_j,
+            ny,
+            nx,
+            pixscale,
+        )
 
-        stamp_rot = rotate_stamp(stamp, -pa_j)
+        stack_sum_unori += stamp.astype(np.float64)
         stack_sum_ori += stamp_rot.astype(np.float64)
 
         cap_full_values[j] = compute_cap_values(
@@ -1849,7 +1948,7 @@ def build_selection_and_cache():
             match_arcsec=PHOTO_MATCH_ARCSEC,
             fracdev_thresh=PHOTO_FRACDEV_THRESH,
             type_galaxy=PHOTO_TYPE_GALAXY,
-            safety=1,
+            safety=SAFETY,
         )
         pa_ff[photo_candidates] = pa_tmp
         ab_ff[photo_candidates] = ab_tmp
@@ -1876,7 +1975,7 @@ def build_selection_and_cache():
         ra_ff[map_candidates],
         dec_ff[map_candidates],
         comptony,
-        STAMP_RADIUS_ARCMIN,
+        STAMP_SOURCE_RADIUS_ARCMIN,
     )
     print(f"  inside map: {(inside_map & map_candidates).sum():,} / {map_candidates.sum():,}")
 
@@ -1893,7 +1992,7 @@ def build_selection_and_cache():
             dec_ff[radio_candidates],
             FIRST_PATH,
             FIRST_MATCH_ARCSEC,
-            safety=4,
+            safety=SAFETY,
         )
 
         print("\nFIRST radio accounting:")
@@ -1936,26 +2035,35 @@ def build_selection_and_cache():
         raise RuntimeError("No galaxies survive the cache selection.")
 
     r_rad_test = STAMP_RADIUS_ARCMIN * np.pi / 180.0 / 60.0
+    r_rad_source_test = STAMP_SOURCE_RADIUS_ARCMIN * np.pi / 180.0 / 60.0
     test = None
+    test_source = None
     for j in np.where(cache_sel)[0][:50]:
         coords = np.deg2rad([dec_ff[j], ra_ff[j]])
         test = reproject.thumbnails(comptony, coords=coords, r=r_rad_test)
-        if test is not None:
+        test_source = reproject.thumbnails(comptony, coords=coords, r=r_rad_source_test)
+        if test is not None and test_source is not None:
             break
-    if test is None:
-        raise RuntimeError("Could not extract any test thumbnail.")
+    if test is None or test_source is None:
+        raise RuntimeError("Could not extract both final and source test thumbnails.")
 
     ny, nx = np.array(test, dtype=np.float32).shape
+    ny_src, nx_src = np.array(test_source, dtype=np.float32).shape
     test_pixscale_arcmin = 2.0 * STAMP_RADIUS_ARCMIN / ny
+    test_source_pixscale_arcmin = 2.0 * STAMP_SOURCE_RADIUS_ARCMIN / ny_src
     test_pixel_area_sr = _thumbnail_pixel_area_sr(test)
-    print(f"  Stamp dimensions: {ny} x {nx}")
-    print(f"  Thumbnail pixel scale: {test_pixscale_arcmin:.6f} arcmin per pixel")
+    print(f"  Final stamp dimensions: {ny} x {nx}")
+    print(f"  Source stamp dimensions: {ny_src} x {nx_src}")
+    print(f"  Final stamp radius: {STAMP_RADIUS_ARCMIN:.6f} arcmin")
+    print(f"  Source stamp radius: {STAMP_SOURCE_RADIUS_ARCMIN:.6f} arcmin")
+    print(f"  Final thumbnail pixel scale: {test_pixscale_arcmin:.6f} arcmin per pixel")
+    print(f"  Source thumbnail pixel scale: {test_source_pixscale_arcmin:.6f} arcmin per pixel")
     print(f"  Thumbnail WCS pixel area: {test_pixel_area_sr:.6e} sr")
     print(f"  Thumbnail WCS pixel area: {test_pixel_area_sr * SR_TO_ARCMIN2:.6e} arcmin^2")
 
     print("\nBuilding or opening stamp cache...")
     config_hash = _extraction_config_hash()
-    h5f, existing_ids = _open_or_create_cache(CACHE_FILE, ny, nx, config_hash)
+    h5f, existing_ids = _open_or_create_cache(CACHE_FILE, ny, nx, ny_src, nx_src, config_hash)
     _ensure_photo_model_cache_columns(h5f)
     _write_cap_area_metadata(h5f, test_pixel_area_sr, test_pixscale_arcmin)
 
@@ -1967,6 +2075,9 @@ def build_selection_and_cache():
     if n_new > 0:
         print(f"  [cache] Adding {n_new:,} new galaxies")
         new_local = cache_indices[new_mask]
+        print("THIS IS ME TESTING CACHE Before they are stored")
+        print(ra_ff[new_local][:10])
+
         _append_to_cache(
             h5f,
             n_new,
@@ -1989,6 +2100,8 @@ def build_selection_and_cache():
             EBV=EBV_ff[new_local],
             has_radio=has_radio_ff[new_local],
         )
+        print("THIS IS ME TESTING CACHE AFTER they are stored")
+        print(h5f["ra"][:10])
     else:
         print(f"  [cache] All {len(cache_fits_idx):,} cache galaxies are already in cache")
 
