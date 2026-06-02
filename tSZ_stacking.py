@@ -46,7 +46,7 @@ os.environ["PATH"] = (
 
 # Use the local LaTeX installation for all text in the figures.
 plt.rcParams.update({
-    "text.usetex": False,
+    "text.usetex": True,
     "font.family": "serif",
     "font.serif": ["Computer Modern Roman"],
     "axes.unicode_minus": False,
@@ -85,7 +85,7 @@ CAP_RADII_ARCMIN  = np.linspace(CAP_AP_MIN_ARCMIN, CAP_AP_MAX_ARCMIN, CAP_N_AP)
 # When True, CAP is computed using the thumbnail WCS area in steradians,
 # matching ThumbStack's y sr convention instead of projected arcmin^2.
 USE_THUMBSTACK_COMPAT = False
-CAP_PLOT_UNIT = "ysr"  # allowed: "ysr" or "yarcmin2"
+CAP_PLOT_UNIT = "yarcmin2"  # allowed: "ysr" or "yarcmin2"
 SR_TO_ARCMIN2 = (180.0 * 60.0 / np.pi) ** 2
 
 # Catalog cuts.
@@ -1360,7 +1360,7 @@ def _shared_stack_norm(finite_chunks):
 
     print(
         f"  [stack color norm] robust symmetric range: "
-        f"p2={lo:.3e}, p98={hi:.3e}, "
+        f"p1={lo:.3e}, p99={hi:.3e}, "
         f"vmin={-vabs:.3e}, vmax={vabs:.3e}"
     )
 
@@ -1958,7 +1958,19 @@ def build_selection_and_cache():
         ab_exp_ff[photo_candidates] = ab_exp_tmp
         fracdev_ff[photo_candidates] = fracdev_tmp
         valid_shape_ff[photo_candidates] = valid_tmp
-        shape_mask = valid_shape_ff & (ab_ff < BA_MAX)
+
+        finite_shape_mask = (
+            np.isfinite(pa_ff)
+            & np.isfinite(ab_ff)
+            & np.isfinite(pa_dev_ff)
+            & np.isfinite(pa_exp_ff)
+            & np.isfinite(ab_dev_ff)
+            & np.isfinite(ab_exp_ff)
+            & np.isfinite(fracdev_ff)
+        )
+
+        shape_mask = valid_shape_ff & finite_shape_mask & (ab_ff < BA_MAX)
+
         print(f"  valid photo shape and b/a cut: {(shape_mask & broad_mask).sum():,}")
     else:
         shape_mask = np.ones(n_firefly, dtype=bool)
@@ -1986,7 +1998,8 @@ def build_selection_and_cache():
 
     has_radio_ff = np.zeros(n_firefly, dtype=bool)
     if FIRST_PATH is not None:
-        radio_candidates = broad_mask & shape_mask & inside_map
+        finite_radio_match_mask = np.isfinite(ra_ff) & np.isfinite(dec_ff)
+        radio_candidates = broad_mask & shape_mask & inside_map & finite_radio_match_mask
         has_radio_ff[radio_candidates] = crossmatch_to_first(
             ra_ff[radio_candidates],
             dec_ff[radio_candidates],
