@@ -111,6 +111,7 @@ SAFETY = 1
 
 # Split settings.
 SPLIT_REMOVE_MIDDLE_PCT = 30.0
+SPLIT_TAIL_PCT = 0.5 * (100.0 - SPLIT_REMOVE_MIDDLE_PCT)
 ACTIVE_SPLIT_SCHEMES = ["mass_age", "light_age"]
 
 SCHEME_META = {
@@ -147,7 +148,7 @@ SEED = 42
 # Output folder for the four requested PDFs.
 SUMMARY_DIR = "./newest_oriented_runs/summary"
 
-# Radio-only summary stack row. Use oriented by default in this oriented pipeline.
+# Radio-only summary stack row. Use unoriented by default in this pipeline.
 RADIO_STACK_KEY = "stack_unori"
 
 # Histogram settings.
@@ -318,10 +319,14 @@ def _fmt_pct(n, d):
     return f"{100.0 * n / d:.2f}%"
 
 
+def _mass_bin_mask(logm, mass_lo, mass_hi):
+    """Mass bin mask using nonoverlapping bins: mass_lo < logM <= mass_hi."""
+    return np.isfinite(logm) & (logm > mass_lo) & (logm <= mass_hi)
+
+
 def _mass_bin_mask_for_accounting(logm, mass_lo, mass_hi):
     """Mass bin mask used only for printed accounting."""
-    return np.isfinite(logm) & (logm >= mass_lo) & (logm <= mass_hi)
-
+    return _mass_bin_mask(logm, mass_lo, mass_hi)
 
 def print_mass_bin_accounting(label, mask, logm, previous_mask=None, indent="  "):
     """
@@ -350,12 +355,12 @@ def print_mass_bin_accounting(label, mask, logm, previous_mask=None, indent="  "
         n_bin = int(np.sum(mask & in_bin))
 
         if previous_mask is None:
-            print(f"{indent}  logM [{mass_lo:.1f}, {mass_hi:.1f}]: {n_bin:,}")
+            print(f"{indent}  logM ({mass_lo:.1f}, {mass_hi:.1f}]: {n_bin:,}")
         else:
             prev_bin = int(np.sum(previous_mask & in_bin))
             lost_bin = prev_bin - n_bin
             print(
-                f"{indent}  logM [{mass_lo:.1f}, {mass_hi:.1f}]: {n_bin:,} "
+                f"{indent}  logM ({mass_lo:.1f}, {mass_hi:.1f}]: {n_bin:,} "
                 f"(lost {lost_bin:,}, kept {_fmt_pct(n_bin, prev_bin)})"
             )
 
@@ -497,9 +502,9 @@ def sample_large_stamp_to_output(
     src = np.asarray(source_stamp, dtype=np.float64)
     src_ny, src_nx = src.shape
 
-    src_pixscale_y = 2.0 * float(source_radius_arcmin) / src_ny
-    src_pixscale_x = 2.0 * float(source_radius_arcmin) / src_nx
-
+    src_pixscale_y = 2.0 * float(source_radius_arcmin) / (src_ny - 1)
+    src_pixscale_x = 2.0 * float(source_radius_arcmin) / (src_nx - 1)
+    
     y_src = _centered_pixel_axis(src_ny, src_pixscale_y)
     x_src = _centered_pixel_axis(src_nx, src_pixscale_x)
 
@@ -525,7 +530,7 @@ def sample_large_stamp_to_output(
         interp = RectBivariateSpline(y_src, x_src, src, kx=1, ky=1)
         out[inside] = interp(yg_src[inside], xg_src[inside], grid=False)
 
-    return out.astype(np.float32)
+    return out.astype(np.float64)
 
 
 def rotate_stamp(stamp, angle_deg):
@@ -581,9 +586,9 @@ def mean_profile_and_covariance(profiles, seed=SEED):
     n_ap = profiles.shape[1]
 
     if n == 0:
-        mean = np.full(n_ap, np.nan, dtype=np.float32)
-        std = np.full(n_ap, np.nan, dtype=np.float32)
-        cov = np.full((n_ap, n_ap), np.nan, dtype=np.float32)
+        mean = np.full(n_ap, np.nan, dtype=np.float64)
+        std = np.full(n_ap, np.nan, dtype=np.float64)
+        cov = np.full((n_ap, n_ap), np.nan, dtype=np.float64)
         return mean, std, cov, 0
 
     mean = np.mean(p, axis=0)
@@ -591,7 +596,7 @@ def mean_profile_and_covariance(profiles, seed=SEED):
     if not RUN_BOOTSTRAP or n < 2:
         std = np.zeros(n_ap, dtype=np.float64)
         cov = np.zeros((n_ap, n_ap), dtype=np.float64)
-        return mean.astype(np.float32), std.astype(np.float32), cov.astype(np.float32), n
+        return mean.astype(np.float64), std.astype(np.float64), cov.astype(np.float64), n
 
     rng = np.random.default_rng(seed)
     boot = np.empty((N_BOOT, n_ap), dtype=np.float64)
@@ -602,7 +607,7 @@ def mean_profile_and_covariance(profiles, seed=SEED):
     cov = np.cov(boot, rowvar=False)
     std = np.sqrt(np.clip(np.diag(cov), 0.0, None))
 
-    return mean.astype(np.float32), std.astype(np.float32), cov.astype(np.float32), n
+    return mean.astype(np.float64), std.astype(np.float64), cov.astype(np.float64), n
 
 
 # Backward-compatible wrapper for any future call sites that still expect
@@ -620,7 +625,7 @@ def make_angle_map(ny, nx):
     """Angle from stamp center: 0 is right, 90 is up."""
     cy, cx = ny // 2, nx // 2
     y, x = np.mgrid[:ny, :nx]
-    return (np.degrees(np.arctan2(y - cy, x - cx)) % 360.0).astype(np.float32)
+    return (np.degrees(np.arctan2(y - cy, x - cx)) % 360.0).astype(np.float64)
 
 
 def sector_mask(angle_map, center_deg, half_width_deg):
@@ -630,9 +635,9 @@ def sector_mask(angle_map, center_deg, half_width_deg):
         lo = (c - half_width_deg) % 360.0
         hi = (c + half_width_deg) % 360.0
         if lo < hi:
-            mask |= (angle_map >= lo) & (angle_map <= hi)
+            mask |= (angle_map >= lo) & (angle_map < hi)
         else:
-            mask |= (angle_map >= lo) | (angle_map <= hi)
+            mask |= (angle_map >= lo) | (angle_map < hi)
     return mask
 
 
@@ -650,7 +655,7 @@ def compute_cap_values(
     so the returned CAP values are in y sr.  Otherwise pixel_area is the
     projected thumbnail pixel area in arcmin^2.
     """
-    cap = np.full(len(cap_radii_arcmin), np.nan, dtype=np.float32)
+    cap = np.full(len(cap_radii_arcmin), np.nan, dtype=np.float64)
 
     for i, r_ap in enumerate(cap_radii_arcmin):
         r_disc_pix = r_ap / pixscale
@@ -847,6 +852,11 @@ def crossmatch_to_first(ra, dec, first_path, match_arcsec, safety=1):
     return has_radio
 
 
+def _split_tail_pct_label():
+    if abs(SPLIT_TAIL_PCT - round(SPLIT_TAIL_PCT)) < 1e-8:
+        return f"{int(round(SPLIT_TAIL_PCT))}"
+    return f"{SPLIT_TAIL_PCT:.1f}".rstrip("0").rstrip(".")
+
 # ============================================================
 # HDF5 STAMP CACHE
 # ============================================================
@@ -911,8 +921,8 @@ def _open_or_create_cache(cache_path, ny, nx, ny_src, nx_src, config_hash):
         "stamps",
         shape=(0, ny_src, nx_src),
         maxshape=(None, ny_src, nx_src),
-        dtype=np.float32,
-        chunks=(1, ny, nx),
+        dtype=np.float64,
+        chunks=(1, ny_src, nx_src),
         compression="gzip",
         compression_opts=4,
     )
@@ -1015,6 +1025,7 @@ def extract_to_cache(comptony, h5f):
     t0 = time.time()
     n_done = 0
     n_success = 0
+    n_shape_mismatch = 0
 
     for i in range(n_total):
         if attempted[i]:
@@ -1029,9 +1040,17 @@ def extract_to_cache(comptony, h5f):
             n_done += 1
             continue
 
-        arr = np.array(stamp, dtype=np.float32)
+        arr = np.array(stamp, dtype=np.float64)
         if arr.shape != (ny_src, nx_src):
+            n_shape_mismatch += 1
+            old_shape = arr.shape
             arr = arr[:ny_src, :nx_src]
+            print(
+                f"  [extract] shape mismatch at cache row {i}: "
+                f"got {old_shape}, expected {(ny_src, nx_src)}, "
+                f"after crop {arr.shape}"
+            )
+
         if arr.shape != (ny_src, nx_src) or np.all(arr == 0):
             h5f["stamp_valid"][i] = False
             n_done += 1
@@ -1051,6 +1070,7 @@ def extract_to_cache(comptony, h5f):
     h5f.flush()
     dt = time.time() - t0
     print(f"  [extract] Done: {n_success:,} successful / {n_done:,} attempted in {dt / 60:.1f} min")
+    print(f"  [extract] Shape mismatches encountered: {n_shape_mismatch:,}")
 
 
 # ============================================================
@@ -1083,7 +1103,7 @@ def stack_from_cache(h5f, mask, label=""):
     if n_sel == 0:
         return {"n_success": 0, "effective_mask": effective_mask}
 
-    pixscale = 2.0 * STAMP_RADIUS_ARCMIN / ny
+    pixscale = 2.0 * STAMP_RADIUS_ARCMIN / (ny - 1)
     cap_pixel_area = _cap_pixel_area_for_current_mode(h5f, pixscale)
     print(
         f"  [CAP units: {label_txt}] internal unit={_cap_internal_unit_label()}, "
@@ -1091,7 +1111,7 @@ def stack_from_cache(h5f, mask, label=""):
     )
     cy, cx = ny // 2, nx // 2
     yy, xx = np.mgrid[:ny, :nx]
-    r_map = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2).astype(np.float32)
+    r_map = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2).astype(np.float64)
 
     angle_map = make_angle_map(ny, nx)
     major_mask = sector_mask(angle_map, MAJOR_AXIS_ANGLE, WEDGE_HALF_DEG)
@@ -1103,14 +1123,14 @@ def stack_from_cache(h5f, mask, label=""):
     stack_sum_ori = np.zeros((ny, nx), dtype=np.float64)
 
     n_ap = len(CAP_RADII_ARCMIN)
-    cap_full_values = np.full((n_sel, n_ap), np.nan, dtype=np.float32)
-    cap_major_values = np.full((n_sel, n_ap), np.nan, dtype=np.float32)
-    cap_minor_values = np.full((n_sel, n_ap), np.nan, dtype=np.float32)
+    cap_full_values = np.full((n_sel, n_ap), np.nan, dtype=np.float64)
+    cap_major_values = np.full((n_sel, n_ap), np.nan, dtype=np.float64)
+    cap_minor_values = np.full((n_sel, n_ap), np.nan, dtype=np.float64)
 
     t0 = time.time()
 
     for j, cache_idx in enumerate(indices):
-        source_stamp = np.asarray(h5f["stamps"][cache_idx], dtype=np.float32)
+        source_stamp = np.asarray(h5f["stamps"][cache_idx], dtype=np.float64)
         pa_j = float(pa_all[cache_idx])
 
         # Same coordinate-remapping sampler for both cases.  Angle 0 gives
@@ -1154,8 +1174,8 @@ def stack_from_cache(h5f, mask, label=""):
         "ny": ny,
         "nx": nx,
         "pixscale": pixscale,
-        "stack_unori": (stack_sum_unori / n_sel).astype(np.float32),
-        "stack_ori": (stack_sum_ori / n_sel).astype(np.float32),
+        "stack_unori": (stack_sum_unori / n_sel).astype(np.float64),
+        "stack_ori": (stack_sum_ori / n_sel).astype(np.float64),
         "cap_full_values": cap_full_values,
         "cap_major_values": cap_major_values,
         "cap_minor_values": cap_minor_values,
@@ -1292,7 +1312,7 @@ def _prune_touching_xy_ticks(ax, nbins=STACK_XY_TICK_NBINS):
 
 def _mass_bin_label(mass_lo, mass_hi):
     return (
-        rf"${mass_lo:.1f} \leq \log_{{10}}\!\left(\frac{{M_\ast}}{{M_\odot}}\right) "
+        rf"${mass_lo:.1f} < \log_{{10}}\!\left(\frac{{M_\ast}}{{M_\odot}}\right) "
         rf"\leq {mass_hi:.1f}$"
     )
 
@@ -1386,10 +1406,10 @@ def _imshow_stack_panel(ax, stack, pixscale, norm, n_success=None):
 
     ny, nx = stack.shape
     ext = [
-        -(nx / 2) * pixscale,
-        (nx / 2) * pixscale,
-        -(ny / 2) * pixscale,
-        (ny / 2) * pixscale,
+        -0.5 * nx * pixscale,
+        0.5 * nx * pixscale,
+        -0.5 * ny * pixscale,
+        0.5 * ny * pixscale,
     ]
     im = ax.imshow(stack, origin="lower", cmap="RdBu_r", norm=norm, extent=ext)
     ax.set_xlabel(r"$x\ {\rm [arcmin]}$", fontsize=STACK_AXIS_LABEL_SIZE)
@@ -1490,12 +1510,15 @@ def plot_summary_age_split_stacks(all_bin_results, out_dir, stack_norm):
     if len(all_bin_results) == 0:
         return
 
+    tail_pct = _split_tail_pct_label()
+
     row_defs = [
-        ("mass_age", "lo", r"{\rm Lowest\ 35\%\ mass\ weighted\ age}"),
-        ("mass_age", "hi", r"{\rm Highest\ 35\%\ mass\ weighted\ age}"),
-        ("light_age", "lo", r"{\rm Lowest\ 35\%\ light\ weighted\ age}"),
-        ("light_age", "hi", r"{\rm Highest\ 35\%\ light\ weighted\ age}"),
+        ("mass_age", "lo", rf"{{\rm Lowest\ {tail_pct}\%\ mass\ weighted\ age}}"),
+        ("mass_age", "hi", rf"{{\rm Highest\ {tail_pct}\%\ mass\ weighted\ age}}"),
+        ("light_age", "lo", rf"{{\rm Lowest\ {tail_pct}\%\ light\ weighted\ age}}"),
+        ("light_age", "hi", rf"{{\rm Highest\ {tail_pct}\%\ light\ weighted\ age}}"),
     ]
+
     nrows = len(row_defs)
     ncols = len(MASS_BINS)
     fig, axes = plt.subplots(
@@ -1658,11 +1681,13 @@ def plot_summary_age_split_cap_profiles(all_bin_results, out_dir):
     if len(all_bin_results) == 0:
         return
 
+    tail_pct = _split_tail_pct_label()
+
     curve_defs = [
-        ("mass_age", "lo", r"{\rm Lowest\ 35\%\ mass\ weighted\ age}", -0.09, "o"),
-        ("mass_age", "hi", r"{\rm Highest\ 35\%\ mass\ weighted\ age}", -0.03, "s"),
-        ("light_age", "lo", r"{\rm Lowest\ 35\%\ light\ weighted\ age}", 0.03, "^"),
-        ("light_age", "hi", r"{\rm Highest\ 35\%\ light\ weighted\ age}", 0.09, "D"),
+        ("mass_age", "lo", rf"{{\rm Lowest\ {tail_pct}\%\ mass\ weighted\ age}}", -0.09, "o"),
+        ("mass_age", "hi", rf"{{\rm Highest\ {tail_pct}\%\ mass\ weighted\ age}}", -0.03, "s"),
+        ("light_age", "lo", rf"{{\rm Lowest\ {tail_pct}\%\ light\ weighted\ age}}", 0.03, "^"),
+        ("light_age", "hi", rf"{{\rm Highest\ {tail_pct}\%\ light\ weighted\ age}}", 0.09, "D"),
     ]
 
     fig, axes = plt.subplots(
@@ -1867,7 +1892,7 @@ def build_selection_and_cache():
     )
     mass_range_mask = (
         np.isfinite(logm_ff)
-        & (logm_ff >= CACHE_LOG_MASS_MIN)
+        & (logm_ff > CACHE_LOG_MASS_MIN)
         & (logm_ff <= CACHE_LOG_MASS_MAX)
     )
     redshift_mask = np.ones(n_firefly, dtype=bool)
@@ -1876,7 +1901,7 @@ def build_selection_and_cache():
 
     ebv_mask = np.isfinite(EBV_ff)
     if USE_EBV_CUT:
-        ebv_mask &= EBV_ff <= EBV_MAX
+        ebv_mask &= (EBV_ff >= 0.0) & (EBV_ff <= EBV_MAX)
 
     broad_mask = finite_data_mask & mass_range_mask & redshift_mask & ebv_mask
 
@@ -1890,7 +1915,7 @@ def build_selection_and_cache():
     prev_mask = running_mask
     running_mask = running_mask & mass_range_mask
     print_mass_bin_accounting(
-        f"after mass range [{CACHE_LOG_MASS_MIN:.1f}, {CACHE_LOG_MASS_MAX:.1f}]",
+        f"after mass range ({CACHE_LOG_MASS_MIN:.1f}, {CACHE_LOG_MASS_MAX:.1f}]",
         running_mask,
         logm_ff,
         prev_mask,
@@ -1910,7 +1935,7 @@ def build_selection_and_cache():
         prev_mask = running_mask
         running_mask = running_mask & ebv_mask
         print_mass_bin_accounting(
-            f"after E(B-V) <= {EBV_MAX:.3f}",
+            f"after E(B-V) cut [0.000, {EBV_MAX:.3f}]",
             running_mask,
             logm_ff,
             prev_mask,
@@ -1971,14 +1996,14 @@ def build_selection_and_cache():
 
         shape_mask = valid_shape_ff & finite_shape_mask & (ab_ff < BA_MAX)
 
-        print(f"  valid photo shape and b/a cut: {(shape_mask & broad_mask).sum():,}")
+        print(f"  valid photo shape and 0 < selected b/a < {BA_MAX:.3f}: {(shape_mask & broad_mask).sum():,}")
     else:
         shape_mask = np.ones(n_firefly, dtype=bool)
 
     shape_sel = broad_mask & shape_mask
     print("\nPhoto-shape accounting:")
     print_mass_bin_accounting("before photo shape selection", broad_mask, logm_ff)
-    print_mass_bin_accounting("after photo shape and b/a selection", shape_sel, logm_ff, broad_mask)
+    print_mass_bin_accounting(f"after photo shape and 0 < selected b/a < {BA_MAX:.3f}", shape_sel, logm_ff, broad_mask)
 
     print("\nChecking map coverage...")
     inside_map = np.zeros(n_firefly, dtype=bool)
@@ -2060,10 +2085,10 @@ def build_selection_and_cache():
     if test is None or test_source is None:
         raise RuntimeError("Could not extract both final and source test thumbnails.")
 
-    ny, nx = np.array(test, dtype=np.float32).shape
-    ny_src, nx_src = np.array(test_source, dtype=np.float32).shape
-    test_pixscale_arcmin = 2.0 * STAMP_RADIUS_ARCMIN / ny
-    test_source_pixscale_arcmin = 2.0 * STAMP_SOURCE_RADIUS_ARCMIN / ny_src
+    ny, nx = np.array(test, dtype=np.float64).shape
+    ny_src, nx_src = np.array(test_source, dtype=np.float64).shape
+    test_pixscale_arcmin = 2.0 * STAMP_RADIUS_ARCMIN / (ny - 1)
+    test_source_pixscale_arcmin = 2.0 * STAMP_SOURCE_RADIUS_ARCMIN / (ny_src - 1)
     test_pixel_area_sr = _thumbnail_pixel_area_sr(test)
     print(f"  Final stamp dimensions: {ny} x {nx}")
     print(f"  Source stamp dimensions: {ny_src} x {nx_src}")
@@ -2089,7 +2114,9 @@ def build_selection_and_cache():
         print(f"  [cache] Adding {n_new:,} new galaxies")
         new_local = cache_indices[new_mask]
         print("THIS IS ME TESTING CACHE Before they are stored")
-        print(ra_ff[new_local][:10])
+        print("fits_idx before:", fits_idx_ff[new_local][:10])
+        print("ra before:", ra_ff[new_local][:10])
+
 
         _append_to_cache(
             h5f,
@@ -2114,7 +2141,8 @@ def build_selection_and_cache():
             has_radio=has_radio_ff[new_local],
         )
         print("THIS IS ME TESTING CACHE AFTER they are stored")
-        print(h5f["ra"][:10])
+        print("fits_idx cache:", h5f["fits_idx"][-n_new:][:10])
+        print("ra cache:", h5f["ra"][-n_new:][:10])
     else:
         print(f"  [cache] All {len(cache_fits_idx):,} cache galaxies are already in cache")
 
@@ -2167,7 +2195,7 @@ def add_full_stack_results(h5f, bin_result, mass_mask):
     result = stack_from_cache(
         h5f,
         mass_mask,
-        label=f"full non-radio stack logM [{mass_lo:.1f}, {mass_hi:.1f}]",
+        label=f"full non-radio stack logM ({mass_lo:.1f}, {mass_hi:.1f}]",
     )
 
     if result["n_success"] == 0:
@@ -2175,13 +2203,13 @@ def add_full_stack_results(h5f, bin_result, mass_mask):
         return
 
     cap_m, cap_s, cap_cov, n_cap = mean_profile_and_covariance(
-        result["cap_full_values"], seed=SEED + 10
+        result["cap_full_values"], seed=SEED
     )
     cap_maj_m, cap_maj_s, cap_maj_cov, _ = mean_profile_and_covariance(
-        result["cap_major_values"], seed=SEED + 30
+        result["cap_major_values"], seed=SEED
     )
     cap_min_m, cap_min_s, cap_min_cov, _ = mean_profile_and_covariance(
-        result["cap_minor_values"], seed=SEED + 31
+        result["cap_minor_values"], seed=SEED
     )
 
     print(f"    full CAP profiles from {n_cap:,} galaxies")
@@ -2211,7 +2239,7 @@ def add_radio_stack_results(h5f, bin_result, mass_mask):
     result = stack_from_cache(
         h5f,
         mass_mask,
-        label=f"radio-only stack logM [{mass_lo:.1f}, {mass_hi:.1f}]",
+        label=f"radio-only stack logM ({mass_lo:.1f}, {mass_hi:.1f}]",
     )
 
     if result["n_success"] == 0:
@@ -2248,8 +2276,8 @@ def add_age_split_results(h5f, bin_result, mass_mask, cache_fields):
 
         bin_result[scheme_key] = {}
         split_defs = [
-            ("lo", is_lo, _lo_label(scheme_key), SEED + 100),
-            ("hi", is_hi, _hi_label(scheme_key), SEED + 200),
+            ("lo", is_lo, _lo_label(scheme_key), SEED),
+            ("hi", is_hi, _hi_label(scheme_key), SEED),
         ]
 
         for split_key, split_mask, label, seed in split_defs:
@@ -2263,7 +2291,7 @@ def add_age_split_results(h5f, bin_result, mass_mask, cache_fields):
             result = stack_from_cache(
                 h5f,
                 split_mask,
-                label=f"{label} logM [{mass_lo:.1f}, {mass_hi:.1f}]",
+                label=f"{label} logM ({mass_lo:.1f}, {mass_hi:.1f}]",
             )
             if result["n_success"] == 0:
                 bin_result[scheme_key][split_key] = {"n_success": 0}
@@ -2289,9 +2317,9 @@ def _hist_bin_edges(var_name, mass_lo=None, mass_hi=None):
     if var_name == "logm":
         return np.linspace(mass_lo, mass_hi, HIST_N_BINS + 1)
     if var_name == "z":
-        return np.linspace(0.2, 0.6, HIST_N_BINS + 1)
+        return np.linspace(Z_MIN, Z_MAX, HIST_N_BINS + 1)
     if var_name == "EBV":
-        return np.linspace(0.0, 0.1, HIST_N_BINS + 1)
+        return np.linspace(0.0, EBV_MAX, HIST_N_BINS + 1)
     if var_name == "age_log":
         return np.linspace(HIST_AGE_LOG_MIN, HIST_AGE_LOG_MAX, HIST_N_BINS + 1)
     raise ValueError(f"Unknown histogram variable: {var_name}")
@@ -2366,13 +2394,15 @@ def plot_summary_age_split_histograms(all_bin_results, h5f, out_dir, var_name):
     if len(all_bin_results) == 0:
         return
 
-    curve_defs = [
-        ("mass_age", "lo", r"{\rm Lowest\ 35\%\ mass\ weighted\ age}"),
-        ("mass_age", "hi", r"{\rm Highest\ 35\%\ mass\ weighted\ age}"),
-        ("light_age", "lo", r"{\rm Lowest\ 35\%\ light\ weighted\ age}"),
-        ("light_age", "hi", r"{\rm Highest\ 35\%\ light\ weighted\ age}"),
-    ]
+    tail_pct = _split_tail_pct_label()
 
+    curve_defs = [
+        ("mass_age", "lo", rf"{{\rm Lowest\ {tail_pct}\%\ mass\ weighted\ age}}"),
+        ("mass_age", "hi", rf"{{\rm Highest\ {tail_pct}\%\ mass\ weighted\ age}}"),
+        ("light_age", "lo", rf"{{\rm Lowest\ {tail_pct}\%\ light\ weighted\ age}}"),
+        ("light_age", "hi", rf"{{\rm Highest\ {tail_pct}\%\ light\ weighted\ age}}"),
+    ]
+    
     fig, axes = plt.subplots(
         1,
         len(MASS_BINS),
@@ -2532,7 +2562,7 @@ def plot_summary_oriented_selected_ba_histograms(all_bin_results, h5f, out_dir):
 
         if mask is not None:
             x = ab_all[mask]
-            x = x[np.isfinite(x) & (x > 0.0) & (x <= 1.0)]
+            x = x[np.isfinite(x) & (x > 0.0) & (x < BA_MAX)]
             _fraction_step_hist(ax, x, bins)
 
         ax.set_title(_mass_bin_label(mass_lo, mass_hi), fontsize=HIST_PANEL_TITLE_SIZE, pad=HIST_PANEL_TITLE_PAD)
@@ -2547,7 +2577,7 @@ def plot_summary_oriented_selected_ba_histograms(all_bin_results, h5f, out_dir):
         ax.set_ylim(*HIST_YLIMS["ba_selected"])
         _prune_touching_x_ticks(ax)
 
-    fig.suptitle(r"{\rm Selected\ Oriented\ Sample\ Axis\ Ratio}", fontsize=HIST_SUPTITLE_SIZE, y=HIST_SUPTITLE_Y)
+    fig.suptitle(r"{\rm Nonradio\ Oriented\ Sample\ Axis\ Ratio}", fontsize=HIST_SUPTITLE_SIZE, y=HIST_SUPTITLE_Y)
 
     path = os.path.join(out_dir, "summary_oriented_hist_ba_selected_1x3.pdf")
     _savefig(path)
@@ -2608,7 +2638,7 @@ def plot_summary_photo_model_delta_ba_histograms(all_bin_results, h5f, out_dir):
         ax.set_ylim(*HIST_YLIMS["delta_ba"])
         _prune_touching_x_ticks(ax)
 
-    fig.suptitle(r"{\rm deVaucouleurs\ minus\ Exponential\ Axis\ Ratio}", fontsize=HIST_SUPTITLE_SIZE, y=HIST_SUPTITLE_Y)
+    fig.suptitle(r"{\rm Nonradio\ deVaucouleurs\ minus\ Exponential\ Axis\ Ratio}", fontsize=HIST_SUPTITLE_SIZE, y=HIST_SUPTITLE_Y)
 
     path = os.path.join(out_dir, "summary_photo_model_hist_delta_ba_dev_minus_exp_1x3.pdf")
     _savefig(path)
@@ -2666,7 +2696,7 @@ def plot_summary_photo_model_folded_pa_difference_histograms(all_bin_results, h5
         ax.set_ylim(*HIST_YLIMS["pa_folded_diff"])
         _prune_touching_x_ticks(ax)
 
-    fig.suptitle(r"{\rm Folded\ deVaucouleurs\ versus\ Exponential\ PA\ Difference}", fontsize=HIST_SUPTITLE_SIZE, y=HIST_SUPTITLE_Y)
+    fig.suptitle(r"{\rm Nonradio\ Folded\ deVaucouleurs\ versus\ Exponential\ PA\ Difference}", fontsize=HIST_SUPTITLE_SIZE, y=HIST_SUPTITLE_Y)
 
     path = os.path.join(out_dir, "summary_photo_model_hist_folded_pa_difference_1x3.pdf")
     _savefig(path)
@@ -2678,6 +2708,7 @@ def main():
     lo_pct = (100.0 - SPLIT_REMOVE_MIDDLE_PCT) / 2.0
     print("=" * 70)
     print("ORIENTED TSZ STACKING, SUMMARY FIGURES AND DIAGNOSTIC HISTOGRAMS")
+    print("  Mass bin convention: mass_lo < log10(M*/Msun) <= mass_hi")
     print(f"  Mass bins: {MASS_BINS}")
     print(f"  Split tails: bottom/top {lo_pct:.0f} percent")
     print(f"  CAP radii: {CAP_RADII_ARCMIN}")
@@ -2685,7 +2716,7 @@ def main():
     print(f"  CAP internal unit: {_cap_internal_unit_label()}")
     print(f"  CAP plot unit: {CAP_PLOT_UNIT}")
     print(f"  Bootstrap errors: {'ON' if RUN_BOOTSTRAP else 'OFF'}, N_BOOT={N_BOOT:,}")
-    print("  Mass matching, weighted statistics, and significance tests: removed")
+    print("  Mass matching, weighted statistics, and significance tests: currently removed")
     print("=" * 70)
 
     h5f, base_fits_idx, radio_fits_idx = build_selection_and_cache()
@@ -2722,14 +2753,11 @@ def main():
 
     for mass_lo, mass_hi in MASS_BINS:
         print("\n" + "=" * 70)
-        print(f"MASS BIN: log stellar mass [{mass_lo}, {mass_hi}]")
+        print(f"MASS BIN: log stellar mass ({mass_lo}, {mass_hi}]")
         print("=" * 70)
 
-        in_mass_bin = (
-            np.isfinite(cache_logm)
-            & (cache_logm >= mass_lo)
-            & (cache_logm <= mass_hi)
-        )
+        in_mass_bin = _mass_bin_mask(cache_logm, mass_lo, mass_hi)
+        
         main_bin_before_stamp = cache_in_current_selection & in_mass_bin
         main_bin_after_stamp = main_bin_before_stamp & cache_stamp_valid
         radio_bin_before_stamp = cache_in_radio_selection & in_mass_bin
