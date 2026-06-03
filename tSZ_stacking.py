@@ -80,13 +80,10 @@ CAP_AP_MIN_ARCMIN = 1.0
 CAP_AP_MAX_ARCMIN = 6.0
 CAP_RADII_ARCMIN  = np.linspace(CAP_AP_MIN_ARCMIN, CAP_AP_MAX_ARCMIN, CAP_N_AP)
 
-# ThumbStack compatibility for CAP area and units only.
-# This keeps your own aperture radii, uniform weights, and oriented rotation.
-# When True, CAP is computed using the thumbnail WCS area in steradians,
-# matching ThumbStack's y sr convention instead of projected arcmin^2.
-USE_THUMBSTACK_COMPAT = False
-CAP_PLOT_UNIT = "yarcmin2"  # allowed: "ysr" or "yarcmin2"
-SR_TO_ARCMIN2 = (180.0 * 60.0 / np.pi) ** 2
+# CAP units. Pixell/reproject handles the sky projection when extracting
+# each thumbnail. After extraction, the local cutout is treated as a flat
+# angular grid, so CAP values are reported in y arcmin^2.
+CAP_UNIT_LABEL = r"$\mathrm{CAP}\ [y\,\mathrm{arcmin}^{2}]$"
 
 # Catalog cuts.
 MASS_BINS = [
@@ -364,96 +361,30 @@ def print_mass_bin_accounting(label, mask, logm, previous_mask=None, indent="  "
                 f"(lost {lost_bin:,}, kept {_fmt_pct(n_bin, prev_bin)})"
             )
 
-def _cap_internal_unit_label():
-    """Return the unit used for stored CAP values."""
-    return "y sr" if USE_THUMBSTACK_COMPAT else "y arcmin^2"
-
-
-def _cap_plot_scale():
-    """Scale internal CAP values into the requested plotting unit."""
-    unit = CAP_PLOT_UNIT.lower().replace("_", "")
-    if unit in ("ysr", "sr"):
-        if not USE_THUMBSTACK_COMPAT:
-            return 1.0 / SR_TO_ARCMIN2
-        return 1.0
-    if unit in ("yarcmin2", "arcmin2", "arcmin^2"):
-        if USE_THUMBSTACK_COMPAT:
-            return SR_TO_ARCMIN2
-        return 1.0
-    raise ValueError("CAP_PLOT_UNIT must be 'ysr' or 'yarcmin2'.")
-
-
 def _cap_to_plot_units(values):
-    """Convert CAP values from the internal unit to the plotting unit."""
+    """CAP values are already in y arcmin^2."""
     if values is None:
         return None
-    return np.asarray(values, dtype=np.float64) * _cap_plot_scale()
+    return np.asarray(values, dtype=np.float64)
 
 
 def _cap_plot_axis_label():
-    """Label matching CAP_PLOT_UNIT."""
-    unit = CAP_PLOT_UNIT.lower().replace("_", "")
-    if unit in ("ysr", "sr"):
-        return r"$\mathrm{CAP}\ [y\,\mathrm{sr}]$"
-    if unit in ("yarcmin2", "arcmin2", "arcmin^2"):
-        return r"$\mathrm{CAP}\ [y\,\mathrm{arcmin}^{2}]$"
-    raise ValueError("CAP_PLOT_UNIT must be 'ysr' or 'yarcmin2'.")
+    """CAP axis label for the y arcmin^2 convention."""
+    return CAP_UNIT_LABEL
 
 
-def _thumbnail_pixel_area_sr(stamp):
-    """Return the mean pixel area of a pixell thumbnail in steradians.
-
-    ThumbStack computes pixArea as map.area() divided by the number of
-    pixels.  We do the same before converting the thumbnail to a plain
-    NumPy array for the HDF5 cache.
-    """
-    if not hasattr(stamp, "area"):
-        raise TypeError(
-            "The thumbnail does not expose an area() method. "
-            "Cannot compute ThumbStack compatible WCS pixel area."
-        )
-    total_area_sr = float(stamp.area())
-    n_pix = int(np.prod(stamp.shape))
-    if not np.isfinite(total_area_sr) or total_area_sr <= 0.0 or n_pix <= 0:
-        raise ValueError("Invalid thumbnail area; cannot compute CAP pixel area.")
-    return total_area_sr / n_pix
-
-
-def _write_cap_area_metadata(h5f, cap_pixel_area_sr, pixscale_arcmin):
-    """Store CAP unit metadata in the HDF5 cache."""
-    if USE_THUMBSTACK_COMPAT:
-        cap_pixel_area_sr = float(cap_pixel_area_sr)
-        if not np.isfinite(cap_pixel_area_sr) or cap_pixel_area_sr <= 0.0:
-            raise ValueError("USE_THUMBSTACK_COMPAT=True requires a positive pixel area in sr.")
-
-        old = h5f.attrs.get("cap_pixel_area_sr", None)
-        if old is not None and not np.isclose(float(old), cap_pixel_area_sr, rtol=1e-8, atol=0.0):
-            raise RuntimeError(
-                "Existing cache has a different CAP pixel area. "
-                "Delete the stamp cache or rebuild it before continuing."
-            )
-
-        h5f.attrs["cap_pixel_area_sr"] = cap_pixel_area_sr
-        h5f.attrs["cap_internal_unit"] = "y_sr"
-    else:
-        h5f.attrs["cap_pixel_area_arcmin2"] = float(pixscale_arcmin) ** 2
-        h5f.attrs["cap_internal_unit"] = "y_arcmin2"
-
-    h5f.attrs["cap_plot_unit"] = CAP_PLOT_UNIT
-    h5f.attrs["cap_plot_scale_from_internal"] = float(_cap_plot_scale())
-    h5f.flush()
-
-
-def _cap_pixel_area_for_current_mode(h5f, pixscale_arcmin):
-    """Pixel area factor used by compute_cap_values."""
-    if USE_THUMBSTACK_COMPAT:
-        if "cap_pixel_area_sr" not in h5f.attrs:
-            raise RuntimeError(
-                "Missing cap_pixel_area_sr in the stamp cache. "
-                "Rebuild or reopen the cache with USE_THUMBSTACK_COMPAT=True."
-            )
-        return float(h5f.attrs["cap_pixel_area_sr"])
+def _cap_pixel_area_arcmin2(pixscale_arcmin):
+    """Projected local cutout pixel area in arcmin^2."""
     return float(pixscale_arcmin) ** 2
+
+
+def _write_cap_area_metadata(h5f, pixscale_arcmin):
+    """Store CAP unit metadata in the HDF5 cache."""
+    h5f.attrs["cap_pixel_area_arcmin2"] = _cap_pixel_area_arcmin2(pixscale_arcmin)
+    h5f.attrs["cap_internal_unit"] = "y_arcmin2"
+    h5f.attrs["cap_plot_unit"] = "yarcmin2"
+    h5f.attrs["cap_plot_scale_from_internal"] = 1.0
+    h5f.flush()
 
 
 def _scheme_field(sk):
@@ -651,9 +582,9 @@ def compute_cap_values(
 ):
     """Compensated aperture photometry on one image.
 
-    If USE_THUMBSTACK_COMPAT=True, pixel_area is the WCS pixel area in sr,
-    so the returned CAP values are in y sr.  Otherwise pixel_area is the
-    projected thumbnail pixel area in arcmin^2.
+    The returned CAP values are in y arcmin^2. Pixell/reproject handles
+    the map projection during thumbnail extraction; this routine then works
+    on the local projected cutout with pixel_area = pixscale_arcmin^2.
     """
     cap = np.full(len(cap_radii_arcmin), np.nan, dtype=np.float64)
 
@@ -1104,10 +1035,10 @@ def stack_from_cache(h5f, mask, label=""):
         return {"n_success": 0, "effective_mask": effective_mask}
 
     pixscale = 2.0 * STAMP_RADIUS_ARCMIN / (ny - 1)
-    cap_pixel_area = _cap_pixel_area_for_current_mode(h5f, pixscale)
+    cap_pixel_area = _cap_pixel_area_arcmin2(pixscale)
     print(
-        f"  [CAP units: {label_txt}] internal unit={_cap_internal_unit_label()}, "
-        f"pixel_area={cap_pixel_area:.6e}"
+        f"  [CAP units: {label_txt}] internal unit=y arcmin^2, "
+        f"pixel_area={cap_pixel_area:.6e} arcmin^2"
     )
     cy, cx = ny // 2, nx // 2
     yy, xx = np.mgrid[:ny, :nx]
@@ -1839,9 +1770,9 @@ def save_cap_covariances(all_bin_results, out_dir):
                     payload[f"{prefix}_cov"] = res["cap_cov"]
 
     payload["cap_radii_arcmin"] = CAP_RADII_ARCMIN
-    payload["cap_internal_unit"] = np.array(_cap_internal_unit_label())
-    payload["cap_plot_unit"] = np.array(CAP_PLOT_UNIT)
-    payload["cap_plot_scale_from_internal"] = np.array(_cap_plot_scale())
+    payload["cap_internal_unit"] = np.array("y arcmin^2")
+    payload["cap_plot_unit"] = np.array("yarcmin2")
+    payload["cap_plot_scale_from_internal"] = np.array(1.0)
     path = os.path.join(out_dir, "cap_profile_covariances.npz")
     np.savez(path, **payload)
     print(f"  [CAP covariance] {path}")
@@ -2089,21 +2020,20 @@ def build_selection_and_cache():
     ny_src, nx_src = np.array(test_source, dtype=np.float64).shape
     test_pixscale_arcmin = 2.0 * STAMP_RADIUS_ARCMIN / (ny - 1)
     test_source_pixscale_arcmin = 2.0 * STAMP_SOURCE_RADIUS_ARCMIN / (ny_src - 1)
-    test_pixel_area_sr = _thumbnail_pixel_area_sr(test)
+    test_pixel_area_arcmin2 = test_pixscale_arcmin ** 2
     print(f"  Final stamp dimensions: {ny} x {nx}")
     print(f"  Source stamp dimensions: {ny_src} x {nx_src}")
     print(f"  Final stamp radius: {STAMP_RADIUS_ARCMIN:.6f} arcmin")
     print(f"  Source stamp radius: {STAMP_SOURCE_RADIUS_ARCMIN:.6f} arcmin")
     print(f"  Final thumbnail pixel scale: {test_pixscale_arcmin:.6f} arcmin per pixel")
     print(f"  Source thumbnail pixel scale: {test_source_pixscale_arcmin:.6f} arcmin per pixel")
-    print(f"  Thumbnail WCS pixel area: {test_pixel_area_sr:.6e} sr")
-    print(f"  Thumbnail WCS pixel area: {test_pixel_area_sr * SR_TO_ARCMIN2:.6e} arcmin^2")
+    print(f"  CAP pixel area used: {test_pixel_area_arcmin2:.6e} arcmin^2")
 
     print("\nBuilding or opening stamp cache...")
     config_hash = _extraction_config_hash()
     h5f, existing_ids = _open_or_create_cache(CACHE_FILE, ny, nx, ny_src, nx_src, config_hash)
     _ensure_photo_model_cache_columns(h5f)
-    _write_cap_area_metadata(h5f, test_pixel_area_sr, test_pixscale_arcmin)
+    _write_cap_area_metadata(h5f, test_pixscale_arcmin)
 
     cache_indices = np.where(cache_sel)[0]
     cache_fits_idx = fits_idx_ff[cache_indices]
@@ -2712,9 +2642,8 @@ def main():
     print(f"  Mass bins: {MASS_BINS}")
     print(f"  Split tails: bottom/top {lo_pct:.0f} percent")
     print(f"  CAP radii: {CAP_RADII_ARCMIN}")
-    print(f"  ThumbStack CAP area compatibility: {'ON' if USE_THUMBSTACK_COMPAT else 'OFF'}")
-    print(f"  CAP internal unit: {_cap_internal_unit_label()}")
-    print(f"  CAP plot unit: {CAP_PLOT_UNIT}")
+    print("  CAP unit convention: y arcmin^2")
+    print("  Projection handling: pixell/reproject extracts local cutouts from the CAR map")
     print(f"  Bootstrap errors: {'ON' if RUN_BOOTSTRAP else 'OFF'}, N_BOOT={N_BOOT:,}")
     print("  Mass matching, weighted statistics, and significance tests: currently removed")
     print("=" * 70)
