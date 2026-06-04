@@ -148,15 +148,18 @@ SUMMARY_DIR = "./mass_weighted_oriented_runs/summary"
 # Radio-only summary stack row. Use unoriented by default in this pipeline.
 RADIO_STACK_KEY = "stack_unori"
 
-# Histogram settings.
-HIST_N_BINS = 20
-
 # Split-stack mass weighting.
 # This affects only the age-split stacks, not the full oriented stacks or radio stacks.
 USE_SPLIT_MASS_WEIGHTS = True
 SPLIT_MASS_WEIGHT_N_BINS = 20
+
+# Histogram settings.
+# Force all diagnostic histograms to use the same bin count as the mass-weighting bins.
+HIST_N_BINS = SPLIT_MASS_WEIGHT_N_BINS
+
 # Set this to something like 5.0 if sparse edge bins get dangerously large weights.
 SPLIT_MASS_WEIGHT_CLIP = None
+
 
 HIST_YLIMS = {
     "logm": (0.0, 0.15),
