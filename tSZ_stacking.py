@@ -151,11 +151,15 @@ RADIO_STACK_KEY = "stack_unori"
 # Split-stack mass weighting.
 # This affects only the age-split stacks, not the full oriented stacks or radio stacks.
 USE_SPLIT_MASS_WEIGHTS = True
-SPLIT_MASS_WEIGHT_N_BINS = 20
+
+# Single source of truth for the mass-weighting bin count.
+# Change this one number only.
+MASS_WEIGHT_N_BINS = 20
+SPLIT_MASS_WEIGHT_N_BINS = MASS_WEIGHT_N_BINS
 
 # Histogram settings.
 # Force all diagnostic histograms to use the same bin count as the mass-weighting bins.
-HIST_N_BINS = SPLIT_MASS_WEIGHT_N_BINS
+HIST_N_BINS = MASS_WEIGHT_N_BINS
 
 # Set this to something like 5.0 if sparse edge bins get dangerously large weights.
 SPLIT_MASS_WEIGHT_CLIP = None
@@ -2241,10 +2245,15 @@ def add_radio_stack_results(h5f, bin_result, mass_mask):
 def mass_uniform_weights(logm_all, split_mask, mass_lo, mass_hi, n_bins=SPLIT_MASS_WEIGHT_N_BINS):
     """Return per-row weights that flatten one split sample in stellar mass.
 
-    Within the parent mass bin, the mass interval is divided into n_bins
-    equal-width bins.  A galaxy in bin b receives weight proportional to
+    The weights are defined on the objects selected by split_mask.  For the
+    tSZ stacks, split_mask should already include stamp_valid, otherwise the
+    later stamp-valid cut can spoil the intended mass flattening.
 
-        target_count / N_b = (N_split / n_bins) / N_b.
+    Within the parent mass bin, the mass interval is divided into n_bins
+    equal-width bins.  A galaxy in nonempty bin b receives weight proportional
+    to
+
+        target_count / N_b = (N_selected / n_bins) / N_b.
 
     Empty bins cannot be fixed, because there are no galaxies to reweight.
     The final weights are renormalized so the mean weight of selected
@@ -2253,22 +2262,25 @@ def mass_uniform_weights(logm_all, split_mask, mass_lo, mass_hi, n_bins=SPLIT_MA
     """
     logm_all = np.asarray(logm_all, dtype=np.float64)
     split_mask = np.asarray(split_mask, dtype=bool)
+    n_bins = int(n_bins)
+    if n_bins <= 0:
+        raise ValueError("n_bins must be positive")
 
     weights = np.zeros(len(logm_all), dtype=np.float64)
     edges = np.linspace(mass_lo, mass_hi, n_bins + 1)
 
     selected = (
-    split_mask
-    & np.isfinite(logm_all)
-    & (logm_all > mass_lo)
-    & (logm_all <= mass_hi)
-)
+        split_mask
+        & np.isfinite(logm_all)
+        & (logm_all > mass_lo)
+        & (logm_all <= mass_hi)
+    )
     n_selected = int(np.sum(selected))
     if n_selected == 0:
         return weights, edges, np.zeros(n_bins, dtype=int)
 
     counts, _ = np.histogram(logm_all[selected], bins=edges)
-    target = float(n_selected) * 1.0 / SPLIT_MASS_WEIGHT_N_BINS
+    target = float(n_selected) / float(n_bins)
 
     bin_index = np.searchsorted(edges, logm_all[selected], side="right") - 1
     bin_index = np.clip(bin_index, 0, n_bins - 1)
@@ -2294,10 +2306,10 @@ def mass_uniform_weights(logm_all, split_mask, mass_lo, mass_hi, n_bins=SPLIT_MA
 
     return weights, edges, counts
 
-
 def add_age_split_results(h5f, bin_result, mass_mask, cache_fields):
     """Compute young and old age split stacks for one mass bin."""
     logm_all = h5f["logm"][:]
+    stamp_valid = h5f["stamp_valid"][:]
 
     for scheme_key in ACTIVE_SPLIT_SCHEMES:
         values = cache_fields[_scheme_field(scheme_key)].copy()
@@ -2334,19 +2346,25 @@ def add_age_split_results(h5f, bin_result, mass_mask, cache_fields):
             weight_edges = None
             weight_counts = None
             if USE_SPLIT_MASS_WEIGHTS:
+                # Weight the same population that can actually enter the stack.
+                # If weights are computed before the stamp-valid cut, the final
+                # stacked sample can stop being flat in stellar mass.
+                split_weight_mask = split_mask & stamp_valid
                 split_weights, weight_edges, weight_counts = mass_uniform_weights(
                     logm_all,
-                    split_mask,
+                    split_weight_mask,
                     mass_lo,
                     mass_hi,
                     n_bins=SPLIT_MASS_WEIGHT_N_BINS,
                 )
-                w_sel = split_weights[split_mask]
+                w_sel = split_weights[split_weight_mask]
                 w_sel = w_sel[np.isfinite(w_sel) & (w_sel > 0.0)]
+                n_weight_bins = int(len(weight_counts)) if weight_counts is not None else int(SPLIT_MASS_WEIGHT_N_BINS)
+                target_fraction = 1.0 / float(n_weight_bins)
                 if len(w_sel) > 0:
                     print(
                         f"      mass weighting {label}: "
-                        f"target fraction per bin={1.0 / SPLIT_MASS_WEIGHT_N_BINS:.3f}, "
+                        f"target fraction per bin={target_fraction:.3f}, "
                         f"min/median/max weight={np.min(w_sel):.3e}/"
                         f"{np.median(w_sel):.3e}/{np.max(w_sel):.3e}"
                     )
@@ -2384,7 +2402,7 @@ def add_age_split_results(h5f, bin_result, mass_mask, cache_fields):
 
 def _hist_bin_edges(var_name, mass_lo=None, mass_hi=None):
     if var_name == "logm":
-        return np.linspace(mass_lo, mass_hi, HIST_N_BINS + 1)
+        return np.linspace(mass_lo, mass_hi, MASS_WEIGHT_N_BINS + 1)
     if var_name == "z":
         return np.linspace(Z_MIN, Z_MAX, HIST_N_BINS + 1)
     if var_name == "EBV":
@@ -2637,7 +2655,8 @@ def plot_summary_age_split_weighted_mass_histograms(all_bin_results, h5f, out_di
                 label=rf"${label}$",
             )
 
-        ax.axhline(1.0 / SPLIT_MASS_WEIGHT_N_BINS, color=HIST_ZERO_LINE_COLOR, lw=HIST_ZERO_LINE_WIDTH, ls=HIST_ZERO_LINE_STYLE)
+        target_fraction = 1.0 / float(len(bins) - 1)
+        ax.axhline(target_fraction, color=HIST_ZERO_LINE_COLOR, lw=HIST_ZERO_LINE_WIDTH, ls=HIST_ZERO_LINE_STYLE)
         ax.set_title(_mass_bin_label(mass_lo, mass_hi), fontsize=HIST_PANEL_TITLE_SIZE, pad=HIST_PANEL_TITLE_PAD)
         ax.tick_params(labelsize=HIST_TICK_LABEL_SIZE)
         ax.set_xlabel(_hist_xlabel("logm"), fontsize=HIST_AXIS_LABEL_SIZE)
@@ -2945,7 +2964,7 @@ def main():
     print("  CAP unit convention: y arcmin^2")
     print("  Projection handling: pixell/reproject extracts local cutouts from the CAR map")
     print(f"  Bootstrap errors: {'ON' if RUN_BOOTSTRAP else 'OFF'}, N_BOOT={N_BOOT:,}")
-    print(f"  Split-stack mass weights: {'ON' if USE_SPLIT_MASS_WEIGHTS else 'OFF'}, bins={SPLIT_MASS_WEIGHT_N_BINS}")
+    print(f"  Split-stack mass weights: {'ON' if USE_SPLIT_MASS_WEIGHTS else 'OFF'}, bins={MASS_WEIGHT_N_BINS}")
     print("=" * 70)
 
     h5f, base_fits_idx, radio_fits_idx = build_selection_and_cache()
