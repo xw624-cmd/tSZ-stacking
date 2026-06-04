@@ -143,7 +143,7 @@ N_BOOT = 10000
 SEED = 42
 
 # Output folder for the four requested PDFs.
-SUMMARY_DIR = "./newest_oriented_runs/summary"
+SUMMARY_DIR = "./mass_weighted_oriented_runs/summary"
 
 # Radio-only summary stack row. Use unoriented by default in this pipeline.
 RADIO_STACK_KEY = "stack_unori"
@@ -151,11 +151,18 @@ RADIO_STACK_KEY = "stack_unori"
 # Histogram settings.
 HIST_N_BINS = 20
 
+# Split-stack mass weighting.
+# This affects only the age-split stacks, not the full oriented stacks or radio stacks.
+USE_SPLIT_MASS_WEIGHTS = True
+SPLIT_MASS_WEIGHT_N_BINS = 20
+# Set this to something like 5.0 if sparse edge bins get dangerously large weights.
+SPLIT_MASS_WEIGHT_CLIP = None
+
 HIST_YLIMS = {
     "logm": (0.0, 0.15),
     "z":    (0.0, 0.4),
     "EBV":  (0.0, 0.6),
-    "age_log": (0.0, 0.9),
+    "age_log": (0.0, 1),
     "ba_selected": (0.0, 0.15),
     "delta_ba": (0.0, 1),
     "pa_folded_diff": (0.0, 1),
@@ -503,26 +510,38 @@ def apply_percentile_split(values, remove_middle_pct=30.0):
     return is_lo, is_hi, p_lo_val, p_hi_val
 
 
-def mean_profile_and_covariance(profiles, seed=SEED):
+def mean_profile_and_covariance(profiles, weights=None, seed=SEED):
     """
-    Unweighted mean CAP profile plus bootstrap covariance on the mean.
+    Mean CAP profile plus bootstrap covariance on the mean.
 
-    The returned standard deviation is sqrt(diag(cov)), so the plotted
-    pointwise one-sigma error bars come from the same full covariance matrix
-    that can later be used for correlated chi-square calculations.
+    If weights is None, this is the original unweighted calculation.
+    If weights is supplied, the mean is a weighted mean and the bootstrap
+    resamples galaxies with their corresponding weights.
     """
-    valid = np.all(np.isfinite(profiles), axis=1)
-    p = profiles[valid]
-    n = len(p)
+    profiles = np.asarray(profiles, dtype=np.float64)
     n_ap = profiles.shape[1]
 
-    if n == 0:
+    valid = np.all(np.isfinite(profiles), axis=1)
+
+    if weights is None:
+        w_all = np.ones(profiles.shape[0], dtype=np.float64)
+    else:
+        w_all = np.asarray(weights, dtype=np.float64)
+        if w_all.shape[0] != profiles.shape[0]:
+            raise ValueError("weights must have the same length as profiles")
+        valid &= np.isfinite(w_all) & (w_all > 0.0)
+
+    p = profiles[valid]
+    w = w_all[valid]
+    n = len(p)
+
+    if n == 0 or np.sum(w) <= 0.0:
         mean = np.full(n_ap, np.nan, dtype=np.float64)
         std = np.full(n_ap, np.nan, dtype=np.float64)
         cov = np.full((n_ap, n_ap), np.nan, dtype=np.float64)
         return mean, std, cov, 0
 
-    mean = np.mean(p, axis=0)
+    mean = np.average(p, axis=0, weights=w)
 
     if not RUN_BOOTSTRAP or n < 2:
         std = np.zeros(n_ap, dtype=np.float64)
@@ -533,18 +552,17 @@ def mean_profile_and_covariance(profiles, seed=SEED):
     boot = np.empty((N_BOOT, n_ap), dtype=np.float64)
     for b in range(N_BOOT):
         draw = rng.integers(0, n, size=n)
-        boot[b] = np.mean(p[draw], axis=0)
+        boot[b] = np.average(p[draw], axis=0, weights=w[draw])
 
     cov = np.cov(boot, rowvar=False)
     std = np.sqrt(np.clip(np.diag(cov), 0.0, None))
 
     return mean.astype(np.float64), std.astype(np.float64), cov.astype(np.float64), n
 
-
 # Backward-compatible wrapper for any future call sites that still expect
 # only mean, one-sigma errors, and sample size.
-def mean_profile_and_error(profiles, seed=SEED):
-    mean, std, cov, n = mean_profile_and_covariance(profiles, seed=seed)
+def mean_profile_and_error(profiles, seed=SEED, weights=None):
+    mean, std, cov, n = mean_profile_and_covariance(profiles, weights=weights, seed=seed)
     return mean, std, n
 
 
@@ -1008,8 +1026,8 @@ def extract_to_cache(comptony, h5f):
 # STACKING
 # ============================================================
 
-def stack_from_cache(h5f, mask, label=""):
-    """Unweighted stack for a selected mask.
+def stack_from_cache(h5f, mask, label="", weights=None):
+    """Stack for a selected mask, optionally using per-galaxy weights.
 
     Cached stamps are larger source thumbnails.  Each selected source
     thumbnail is sampled onto the final output grid, once with angle 0 for
@@ -1026,10 +1044,38 @@ def stack_from_cache(h5f, mask, label=""):
     n_sel = len(indices)
     n_rejected_stamp_valid = int(np.sum(mask & ~stamp_valid))
 
+    if weights is None:
+        selected_weights = np.ones(n_sel, dtype=np.float64)
+    else:
+        weights = np.asarray(weights, dtype=np.float64)
+        if weights.shape[0] != len(mask):
+            raise ValueError("weights must have the same length as mask")
+        selected_weights = weights[indices].astype(np.float64)
+        bad_weight = ~np.isfinite(selected_weights) | (selected_weights <= 0.0)
+        if np.any(bad_weight):
+            print(f"  [stack accounting: {label}] rejecting {int(np.sum(bad_weight)):,} nonpositive or nonfinite weights")
+            keep = ~bad_weight
+            indices = indices[keep]
+            selected_weights = selected_weights[keep]
+            n_sel = len(indices)
+            if n_sel == 0:
+                return {"n_success": 0, "effective_mask": effective_mask}
+        
+        effective_mask = np.zeros_like(mask, dtype=bool)
+        effective_mask[indices] = True
+
+    sum_w = float(np.sum(selected_weights))
+
     label_txt = label if label else "unnamed selection"
     print(f"  [stack accounting: {label_txt}] candidates before stamp-valid cut: {n_candidates:,}")
     print(f"  [stack accounting: {label_txt}] rejected by stamp_valid=False: {n_rejected_stamp_valid:,}")
     print(f"  [stack accounting: {label_txt}] used for stacking: {n_sel:,}")
+    if weights is not None and n_sel > 0:
+        print(
+            f"  [stack accounting: {label_txt}] mass weights: "
+            f"sum={sum_w:.6e}, min={np.nanmin(selected_weights):.3e}, "
+            f"median={np.nanmedian(selected_weights):.3e}, max={np.nanmax(selected_weights):.3e}"
+        )
 
     if n_sel == 0:
         return {"n_success": 0, "effective_mask": effective_mask}
@@ -1081,8 +1127,9 @@ def stack_from_cache(h5f, mask, label=""):
             pixscale,
         )
 
-        stack_sum_unori += stamp.astype(np.float64)
-        stack_sum_ori += stamp_rot.astype(np.float64)
+        w_j = selected_weights[j]
+        stack_sum_unori += w_j * stamp.astype(np.float64)
+        stack_sum_ori += w_j * stamp_rot.astype(np.float64)
 
         cap_full_values[j] = compute_cap_values(
             stamp, r_map, pixscale, CAP_RADII_ARCMIN, cap_pixel_area,
@@ -1105,8 +1152,10 @@ def stack_from_cache(h5f, mask, label=""):
         "ny": ny,
         "nx": nx,
         "pixscale": pixscale,
-        "stack_unori": (stack_sum_unori / n_sel).astype(np.float64),
-        "stack_ori": (stack_sum_ori / n_sel).astype(np.float64),
+        "stack_unori": (stack_sum_unori / sum_w).astype(np.float64),
+        "stack_ori": (stack_sum_ori / sum_w).astype(np.float64),
+        "weights": selected_weights.astype(np.float64),
+        "sum_weights": sum_w,
         "cap_full_values": cap_full_values,
         "cap_major_values": cap_major_values,
         "cap_minor_values": cap_minor_values,
@@ -1125,6 +1174,8 @@ SUMMARY_PDF_NAMES = [
     "summary_stellar_age_cap_profiles_1x3.pdf",
     "summary_radio_full_stack_1x3.pdf",
     "summary_stellar_age_hist_mass_1x3.pdf",
+    "summary_stellar_age_hist_mass_weighted_1x3.pdf",
+    "summary_stellar_age_mass_weights_1x3.pdf",
     "summary_stellar_age_hist_redshift_1x3.pdf",
     "summary_stellar_age_hist_ebv_1x3.pdf",
     "summary_stellar_age_hist_age_log_1x3.pdf",
@@ -2184,8 +2235,67 @@ def add_radio_stack_results(h5f, bin_result, mass_mask):
     }
 
 
+def mass_uniform_weights(logm_all, split_mask, mass_lo, mass_hi, n_bins=SPLIT_MASS_WEIGHT_N_BINS):
+    """Return per-row weights that flatten one split sample in stellar mass.
+
+    Within the parent mass bin, the mass interval is divided into n_bins
+    equal-width bins.  A galaxy in bin b receives weight proportional to
+
+        target_count / N_b = (N_split / n_bins) / N_b.
+
+    Empty bins cannot be fixed, because there are no galaxies to reweight.
+    The final weights are renormalized so the mean weight of selected
+    galaxies is 1, which keeps weight values easy to read.  This
+    renormalization does not change any weighted mean stack.
+    """
+    logm_all = np.asarray(logm_all, dtype=np.float64)
+    split_mask = np.asarray(split_mask, dtype=bool)
+
+    weights = np.zeros(len(logm_all), dtype=np.float64)
+    edges = np.linspace(mass_lo, mass_hi, n_bins + 1)
+
+    selected = (
+    split_mask
+    & np.isfinite(logm_all)
+    & (logm_all > mass_lo)
+    & (logm_all <= mass_hi)
+)
+    n_selected = int(np.sum(selected))
+    if n_selected == 0:
+        return weights, edges, np.zeros(n_bins, dtype=int)
+
+    counts, _ = np.histogram(logm_all[selected], bins=edges)
+    target = float(n_selected) * 1.0 / SPLIT_MASS_WEIGHT_N_BINS
+
+    bin_index = np.searchsorted(edges, logm_all[selected], side="right") - 1
+    bin_index = np.clip(bin_index, 0, n_bins - 1)
+
+    selected_idx = np.where(selected)[0]
+    for b in range(n_bins):
+        in_bin = bin_index == b
+        if counts[b] <= 0:
+            continue
+        weights[selected_idx[in_bin]] = target / float(counts[b])
+
+    if SPLIT_MASS_WEIGHT_CLIP is not None:
+        positive = weights[selected]
+        positive = positive[positive > 0.0]
+        if len(positive) > 0:
+            med = float(np.median(positive))
+            weights[selected] = np.clip(weights[selected], 0.0, SPLIT_MASS_WEIGHT_CLIP * med)
+
+    # Normalize to mean weight 1 over the selected split population.
+    sum_w = float(np.sum(weights[selected]))
+    if sum_w > 0.0:
+        weights[selected] *= n_selected / sum_w
+
+    return weights, edges, counts
+
+
 def add_age_split_results(h5f, bin_result, mass_mask, cache_fields):
     """Compute young and old age split stacks for one mass bin."""
+    logm_all = h5f["logm"][:]
+
     for scheme_key in ACTIVE_SPLIT_SCHEMES:
         values = cache_fields[_scheme_field(scheme_key)].copy()
         values[~mass_mask] = np.nan
@@ -2217,18 +2327,40 @@ def add_age_split_results(h5f, bin_result, mass_mask, cache_fields):
 
             mass_lo = bin_result.get("mass_lo", np.nan)
             mass_hi = bin_result.get("mass_hi", np.nan)
+            split_weights = None
+            weight_edges = None
+            weight_counts = None
+            if USE_SPLIT_MASS_WEIGHTS:
+                split_weights, weight_edges, weight_counts = mass_uniform_weights(
+                    logm_all,
+                    split_mask,
+                    mass_lo,
+                    mass_hi,
+                    n_bins=SPLIT_MASS_WEIGHT_N_BINS,
+                )
+                w_sel = split_weights[split_mask]
+                w_sel = w_sel[np.isfinite(w_sel) & (w_sel > 0.0)]
+                if len(w_sel) > 0:
+                    print(
+                        f"      mass weighting {label}: "
+                        f"target fraction per bin={1.0 / SPLIT_MASS_WEIGHT_N_BINS:.3f}, "
+                        f"min/median/max weight={np.min(w_sel):.3e}/"
+                        f"{np.median(w_sel):.3e}/{np.max(w_sel):.3e}"
+                    )
+
             print(f"      stacking {label}: {split_mask.sum():,} candidates")
             result = stack_from_cache(
                 h5f,
                 split_mask,
                 label=f"{label} logM ({mass_lo:.1f}, {mass_hi:.1f}]",
+                weights=split_weights,
             )
             if result["n_success"] == 0:
                 bin_result[scheme_key][split_key] = {"n_success": 0}
                 continue
 
             cap_m, cap_s, cap_cov, n_cap = mean_profile_and_covariance(
-                result["cap_full_values"], seed=seed
+                result["cap_full_values"], weights=result.get("weights"), seed=seed
             )
             bin_result[scheme_key][split_key] = {
                 "n_success": result["n_success"],
@@ -2240,6 +2372,10 @@ def add_age_split_results(h5f, bin_result, mass_mask, cache_fields):
                 "cap_cov": cap_cov,
                 "n_cap": n_cap,
                 "effective_mask": result["effective_mask"],
+                "mass_weights": result.get("weights"),
+                "mass_weight_edges": weight_edges,
+                "mass_weight_counts": weight_counts,
+                "sum_weights": result.get("sum_weights"),
             }
 
 
@@ -2439,6 +2575,167 @@ def plot_summary_age_split_histograms(all_bin_results, h5f, out_dir, var_name):
     _savefig(path)
     plt.close(fig)
     print(f"  [summary histogram: {var_name}] {path}")
+
+
+def plot_summary_age_split_weighted_mass_histograms(all_bin_results, h5f, out_dir):
+    """Plot mass histograms after applying split-stack mass weights."""
+    if len(all_bin_results) == 0:
+        return
+
+    tail_pct = _split_tail_pct_label()
+    curve_defs = [
+        ("mass_age", "lo", rf"{{\rm Lowest\ {tail_pct}\%\ mass\ weighted\ age}}"),
+        ("mass_age", "hi", rf"{{\rm Highest\ {tail_pct}\%\ mass\ weighted\ age}}"),
+        ("light_age", "lo", rf"{{\rm Lowest\ {tail_pct}\%\ light\ weighted\ age}}"),
+        ("light_age", "hi", rf"{{\rm Highest\ {tail_pct}\%\ light\ weighted\ age}}"),
+    ]
+
+    fig, axes = plt.subplots(
+        1,
+        len(MASS_BINS),
+        figsize=(HIST_FIG_WIDTH_PER_COL * len(MASS_BINS), HIST_FIG_HEIGHT),
+        squeeze=False,
+        sharey=True,
+    )
+    axes = axes.ravel()
+    fig.subplots_adjust(left=HIST_LEFT, right=HIST_RIGHT, bottom=HIST_BOTTOM, top=HIST_TOP, wspace=HIST_WSPACE)
+
+    logm_all = h5f["logm"][:]
+
+    for c, bin_result in enumerate(all_bin_results):
+        ax = axes[c]
+        mass_lo = bin_result.get("mass_lo", MASS_BINS[c][0])
+        mass_hi = bin_result.get("mass_hi", MASS_BINS[c][1])
+        bins = _hist_bin_edges("logm", mass_lo=mass_lo, mass_hi=mass_hi)
+
+        for scheme_key, split_key, label in curve_defs:
+            res = bin_result.get(scheme_key, {}).get(split_key, {})
+            if not isinstance(res, dict):
+                continue
+            mask = res.get("effective_mask")
+            w = res.get("mass_weights")
+            if mask is None or w is None:
+                continue
+
+            x = logm_all[mask]
+            w = np.asarray(w, dtype=np.float64)
+            good = np.isfinite(x) & np.isfinite(w) & (w > 0.0)
+            x = x[good]
+            w = w[good]
+            if len(x) == 0 or np.sum(w) <= 0.0:
+                continue
+
+            ax.hist(
+                x,
+                bins=bins,
+                weights=w / np.sum(w),
+                histtype="step",
+                linewidth=HIST_LINEWIDTH,
+                label=rf"${label}$",
+            )
+
+        ax.axhline(1.0 / SPLIT_MASS_WEIGHT_N_BINS, color=HIST_ZERO_LINE_COLOR, lw=HIST_ZERO_LINE_WIDTH, ls=HIST_ZERO_LINE_STYLE)
+        ax.set_title(_mass_bin_label(mass_lo, mass_hi), fontsize=HIST_PANEL_TITLE_SIZE, pad=HIST_PANEL_TITLE_PAD)
+        ax.tick_params(labelsize=HIST_TICK_LABEL_SIZE)
+        ax.set_xlabel(_hist_xlabel("logm"), fontsize=HIST_AXIS_LABEL_SIZE)
+        if c == 0:
+            ax.set_ylabel(r"$\mathrm{Weighted\ fraction\ per\ bin}$", fontsize=HIST_AXIS_LABEL_SIZE)
+        else:
+            ax.tick_params(labelleft=False)
+        ax.set_ylim(*HIST_YLIMS["logm"])
+        _prune_touching_x_ticks(ax)
+        ax.legend(loc=HIST_LEGEND_LOC, fontsize=HIST_LEGEND_SIZE)
+
+    fig.suptitle(r"{\rm Stellar\ Mass\ Distribution\ After\ Mass\ Weighting}", fontsize=HIST_SUPTITLE_SIZE, y=HIST_SUPTITLE_Y)
+    path = os.path.join(out_dir, "summary_stellar_age_hist_mass_weighted_1x3.pdf")
+    _savefig(path)
+    plt.close(fig)
+    print(f"  [summary weighted mass histogram] {path}")
+
+
+def plot_summary_age_split_mass_weight_values(all_bin_results, h5f, out_dir):
+    """Plot the mean galaxy weight assigned in each mass sub-bin."""
+    if len(all_bin_results) == 0:
+        return
+
+    tail_pct = _split_tail_pct_label()
+    curve_defs = [
+        ("mass_age", "lo", rf"{{\rm Lowest\ {tail_pct}\%\ mass\ weighted\ age}}"),
+        ("mass_age", "hi", rf"{{\rm Highest\ {tail_pct}\%\ mass\ weighted\ age}}"),
+        ("light_age", "lo", rf"{{\rm Lowest\ {tail_pct}\%\ light\ weighted\ age}}"),
+        ("light_age", "hi", rf"{{\rm Highest\ {tail_pct}\%\ light\ weighted\ age}}"),
+    ]
+
+    fig, axes = plt.subplots(
+        1,
+        len(MASS_BINS),
+        figsize=(HIST_FIG_WIDTH_PER_COL * len(MASS_BINS), HIST_FIG_HEIGHT),
+        squeeze=False,
+        sharey=True,
+    )
+    axes = axes.ravel()
+    fig.subplots_adjust(left=HIST_LEFT, right=HIST_RIGHT, bottom=HIST_BOTTOM, top=HIST_TOP, wspace=HIST_WSPACE)
+
+    logm_all = h5f["logm"][:]
+    all_weight_values = []
+
+    for c, bin_result in enumerate(all_bin_results):
+        ax = axes[c]
+        mass_lo = bin_result.get("mass_lo", MASS_BINS[c][0])
+        mass_hi = bin_result.get("mass_hi", MASS_BINS[c][1])
+        bins = _hist_bin_edges("logm", mass_lo=mass_lo, mass_hi=mass_hi)
+        centers = 0.5 * (bins[:-1] + bins[1:])
+
+        for scheme_key, split_key, label in curve_defs:
+            res = bin_result.get(scheme_key, {}).get(split_key, {})
+            if not isinstance(res, dict):
+                continue
+            mask = res.get("effective_mask")
+            w = res.get("mass_weights")
+            if mask is None or w is None:
+                continue
+            x = logm_all[mask]
+            w = np.asarray(w, dtype=np.float64)
+            good = np.isfinite(x) & np.isfinite(w) & (w > 0.0)
+            x = x[good]
+            w = w[good]
+            if len(x) == 0:
+                continue
+
+            bin_idx = np.searchsorted(bins, x, side="right") - 1
+            bin_idx = np.clip(bin_idx, 0, len(bins) - 2)
+            mean_w = np.full(len(bins) - 1, np.nan, dtype=np.float64)
+            for b in range(len(mean_w)):
+                in_b = bin_idx == b
+                if np.any(in_b):
+                    mean_w[b] = np.mean(w[in_b])
+            all_weight_values.append(mean_w[np.isfinite(mean_w)])
+            ax.step(centers, mean_w, where="mid", linewidth=HIST_LINEWIDTH, label=rf"${label}$")
+
+        ax.axhline(1.0, color=HIST_ZERO_LINE_COLOR, lw=HIST_ZERO_LINE_WIDTH, ls=HIST_ZERO_LINE_STYLE)
+        ax.set_title(_mass_bin_label(mass_lo, mass_hi), fontsize=HIST_PANEL_TITLE_SIZE, pad=HIST_PANEL_TITLE_PAD)
+        ax.tick_params(labelsize=HIST_TICK_LABEL_SIZE)
+        ax.set_xlabel(_hist_xlabel("logm"), fontsize=HIST_AXIS_LABEL_SIZE)
+        if c == 0:
+            ax.set_ylabel(r"$\mathrm{Mean\ mass\ weight}$", fontsize=HIST_AXIS_LABEL_SIZE)
+        else:
+            ax.tick_params(labelleft=False)
+        _prune_touching_x_ticks(ax)
+        ax.legend(loc=HIST_LEGEND_LOC, fontsize=HIST_LEGEND_SIZE)
+
+    finite_weight_values = [v for v in all_weight_values if len(v) > 0]
+    if len(finite_weight_values) > 0:
+        vals = np.concatenate(finite_weight_values)
+        ymax = float(np.nanpercentile(vals, 99)) * 1.15
+        ymax = max(ymax, 1.2)
+        for ax in axes:
+            ax.set_ylim(0.0, ymax)
+
+    fig.suptitle(r"{\rm Applied\ Split\ Stack\ Mass\ Weights}", fontsize=HIST_SUPTITLE_SIZE, y=HIST_SUPTITLE_Y)
+    path = os.path.join(out_dir, "summary_stellar_age_mass_weights_1x3.pdf")
+    _savefig(path)
+    plt.close(fig)
+    print(f"  [summary mass weights] {path}")
 
 
 def _fraction_step_hist(ax, x, bins, label=None, linewidth=HIST_LINEWIDTH):
@@ -2645,7 +2942,7 @@ def main():
     print("  CAP unit convention: y arcmin^2")
     print("  Projection handling: pixell/reproject extracts local cutouts from the CAR map")
     print(f"  Bootstrap errors: {'ON' if RUN_BOOTSTRAP else 'OFF'}, N_BOOT={N_BOOT:,}")
-    print("  Mass matching, weighted statistics, and significance tests: currently removed")
+    print(f"  Split-stack mass weights: {'ON' if USE_SPLIT_MASS_WEIGHTS else 'OFF'}, bins={SPLIT_MASS_WEIGHT_N_BINS}")
     print("=" * 70)
 
     h5f, base_fits_idx, radio_fits_idx = build_selection_and_cache()
@@ -2733,6 +3030,8 @@ def main():
     plot_summary_age_split_cap_profiles(all_bin_results, SUMMARY_DIR)
     plot_summary_radio_full_stacks(all_bin_results, SUMMARY_DIR, stack_norm)
     plot_summary_age_split_histograms(all_bin_results, h5f, SUMMARY_DIR, "logm")
+    plot_summary_age_split_weighted_mass_histograms(all_bin_results, h5f, SUMMARY_DIR)
+    plot_summary_age_split_mass_weight_values(all_bin_results, h5f, SUMMARY_DIR)
     plot_summary_age_split_histograms(all_bin_results, h5f, SUMMARY_DIR, "z")
     plot_summary_age_split_histograms(all_bin_results, h5f, SUMMARY_DIR, "EBV")
     plot_summary_age_split_histograms(all_bin_results, h5f, SUMMARY_DIR, "age_log")
