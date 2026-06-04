@@ -130,9 +130,9 @@ SCHEME_META = {
 # STAMP_RADIUS_ARCMIN is the final plotted/CAP stamp half width.
 # STAMP_SOURCE_RADIUS_ARCMIN is the larger source thumbnail half width used
 # for oriented coordinate-remapping rotations.  sqrt(2) is the geometric
-# no-edge-loss radius for rotating a square output grid by any angle.
+# no-edge-loss radius for rotating a square output grid by any angle. REMEBER to round up to the nearest 0.25 multiple
 STAMP_RADIUS_ARCMIN = 15.0
-STAMP_SOURCE_RADIUS_ARCMIN = STAMP_RADIUS_ARCMIN * np.sqrt(2.0)
+STAMP_SOURCE_RADIUS_ARCMIN = 21.25
 CACHE_DIR  = "./stamp_cache"
 CACHE_FILE = os.path.join(CACHE_DIR, "stamps.h5")
 EXTRACTION_BATCH_LOG_EVERY = 2000
