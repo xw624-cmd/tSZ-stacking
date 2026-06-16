@@ -143,7 +143,7 @@ N_BOOT = 10000
 SEED = 42
 
 # Output folder for the four requested PDFs.
-SUMMARY_DIR = "./mass_weighted_oriented_runs/summary"
+SUMMARY_DIR = "./mass_weighted_oriented_runs_3bins/summary"
 
 # Radio-only summary stack row. Use unoriented by default in this pipeline.
 RADIO_STACK_KEY = "stack_unori"
@@ -190,6 +190,10 @@ PA_DIFF_HIST_MAX = 90.0
 # ============================================================
 # All figure polish knobs are centralized here so later tuning does not
 # require digging through the plotting functions.
+
+# colors
+STACK_COLOR_PERCENTILE_LOW = 1
+STACK_COLOR_PERCENTILE_HIGH = 99
 
 # Global save settings.  pad_inches=0 trims boundary whitespace aggressively.
 SAVEFIG_DPI = 220
@@ -1358,8 +1362,8 @@ def _shared_stack_norm(finite_chunks):
     if len(vals) == 0:
         return None
 
-    lo = float(np.nanpercentile(vals, 1))
-    hi = float(np.nanpercentile(vals, 99))
+    lo = float(np.nanpercentile(vals, STACK_COLOR_PERCENTILE_LOW))
+    hi = float(np.nanpercentile(vals, STACK_COLOR_PERCENTILE_HIGH))
 
     if not np.isfinite(lo) or not np.isfinite(hi) or lo == hi:
         lo = float(np.nanmin(vals))
@@ -1834,6 +1838,154 @@ def save_cap_covariances(all_bin_results, out_dir):
     path = os.path.join(out_dir, "cap_profile_covariances.npz")
     np.savez(path, **payload)
     print(f"  [CAP covariance] {path}")
+
+
+
+def _cap_sig(value, error):
+    value = float(value)
+    error = float(error)
+    if not np.isfinite(value) or not np.isfinite(error) or error <= 0.0:
+        return np.nan
+    return value / error
+
+
+def _cap_diff_sig(value_a, error_a, value_b, error_b):
+    value_a = float(value_a)
+    error_a = float(error_a)
+    value_b = float(value_b)
+    error_b = float(error_b)
+    diff = value_a - value_b
+    diff_error = np.sqrt(error_a ** 2 + error_b ** 2)
+    if not np.isfinite(diff) or not np.isfinite(diff_error) or diff_error <= 0.0:
+        return diff, diff_error, np.nan
+    return diff, diff_error, diff / diff_error
+
+
+def _cap_fmt_value(x):
+    x = float(x)
+    if not np.isfinite(x):
+        return "nan"
+    return f"{x:.6e}"
+
+
+def _cap_fmt_sigma(x):
+    x = float(x)
+    if not np.isfinite(x):
+        return "nan"
+    return f"{x:.3f}"
+
+
+def _print_cap_table(title, columns, rows):
+    print("\n" + title)
+    print("\t".join(columns))
+    if len(rows) == 0:
+        print("no data")
+        return
+    for row in rows:
+        print("\t".join(row))
+
+
+def print_cap_significance_tables(all_bin_results):
+    sector_columns = [
+        "mass_bin",
+        "theta_arcmin",
+        "major_mean",
+        "major_err",
+        "major_sigma0",
+        "minor_mean",
+        "minor_err",
+        "minor_sigma0",
+        "major_minus_minor",
+        "major_minus_minor_err",
+        "major_minus_minor_sigma",
+    ]
+    sector_rows = []
+
+    for i_bin, bin_result in enumerate(all_bin_results):
+        mass_lo = bin_result.get("mass_lo", MASS_BINS[i_bin][0])
+        mass_hi = bin_result.get("mass_hi", MASS_BINS[i_bin][1])
+        mass_label = f"({mass_lo:.1f}, {mass_hi:.1f}]"
+        full = bin_result.get("full_stack", {})
+        if not isinstance(full, dict):
+            continue
+
+        maj_m = _cap_to_plot_units(full.get("cap_major_mean"))
+        maj_s = _cap_to_plot_units(full.get("cap_major_std"))
+        min_m = _cap_to_plot_units(full.get("cap_minor_mean"))
+        min_s = _cap_to_plot_units(full.get("cap_minor_std"))
+        if maj_m is None or maj_s is None or min_m is None or min_s is None:
+            continue
+
+        for theta, a_m, a_s, b_m, b_s in zip(CAP_RADII_ARCMIN, maj_m, maj_s, min_m, min_s):
+            diff, diff_err, diff_sig = _cap_diff_sig(a_m, a_s, b_m, b_s)
+            sector_rows.append([
+                mass_label,
+                f"{float(theta):.2f}",
+                _cap_fmt_value(a_m),
+                _cap_fmt_value(a_s),
+                _cap_fmt_sigma(_cap_sig(a_m, a_s)),
+                _cap_fmt_value(b_m),
+                _cap_fmt_value(b_s),
+                _cap_fmt_sigma(_cap_sig(b_m, b_s)),
+                _cap_fmt_value(diff),
+                _cap_fmt_value(diff_err),
+                _cap_fmt_sigma(diff_sig),
+            ])
+
+    _print_cap_table("CAP significance table: major versus minor sector", sector_columns, sector_rows)
+
+    age_columns = [
+        "mass_bin",
+        "theta_arcmin",
+        "low_mean",
+        "low_err",
+        "low_sigma0",
+        "high_mean",
+        "high_err",
+        "high_sigma0",
+        "low_minus_high",
+        "low_minus_high_err",
+        "low_minus_high_sigma",
+    ]
+
+    for scheme_key, title in [
+        ("mass_age", "CAP significance table: lowest versus highest mass weighted stellar age"),
+        ("light_age", "CAP significance table: lowest versus highest light weighted stellar age"),
+    ]:
+        age_rows = []
+        for i_bin, bin_result in enumerate(all_bin_results):
+            mass_lo = bin_result.get("mass_lo", MASS_BINS[i_bin][0])
+            mass_hi = bin_result.get("mass_hi", MASS_BINS[i_bin][1])
+            mass_label = f"({mass_lo:.1f}, {mass_hi:.1f}]"
+            low = bin_result.get(scheme_key, {}).get("lo", {})
+            high = bin_result.get(scheme_key, {}).get("hi", {})
+            if not isinstance(low, dict) or not isinstance(high, dict):
+                continue
+
+            low_m = _cap_to_plot_units(low.get("cap_mean"))
+            low_s = _cap_to_plot_units(low.get("cap_std"))
+            high_m = _cap_to_plot_units(high.get("cap_mean"))
+            high_s = _cap_to_plot_units(high.get("cap_std"))
+            if low_m is None or low_s is None or high_m is None or high_s is None:
+                continue
+
+            for theta, a_m, a_s, b_m, b_s in zip(CAP_RADII_ARCMIN, low_m, low_s, high_m, high_s):
+                diff, diff_err, diff_sig = _cap_diff_sig(a_m, a_s, b_m, b_s)
+                age_rows.append([
+                    mass_label,
+                    f"{float(theta):.2f}",
+                    _cap_fmt_value(a_m),
+                    _cap_fmt_value(a_s),
+                    _cap_fmt_sigma(_cap_sig(a_m, a_s)),
+                    _cap_fmt_value(b_m),
+                    _cap_fmt_value(b_s),
+                    _cap_fmt_sigma(_cap_sig(b_m, b_s)),
+                    _cap_fmt_value(diff),
+                    _cap_fmt_value(diff_err),
+                    _cap_fmt_sigma(diff_sig),
+                ])
+
+        _print_cap_table(title, age_columns, age_rows)
 
 
 # ============================================================
@@ -3061,6 +3213,7 @@ def main():
     plot_summary_photo_model_delta_ba_histograms(all_bin_results, h5f, SUMMARY_DIR)
     plot_summary_photo_model_folded_pa_difference_histograms(all_bin_results, h5f, SUMMARY_DIR)
     save_cap_covariances(all_bin_results, SUMMARY_DIR)
+    print_cap_significance_tables(all_bin_results)
 
     print("\nDone. The only PDFs written by this script are:")
     for pdf_name in SUMMARY_PDF_NAMES:
