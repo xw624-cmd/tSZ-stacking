@@ -1885,21 +1885,47 @@ def _print_cap_table(title, columns, rows):
         print("\t".join(row))
 
 
+def _cap_total_sigma(sigmas):
+    sigmas = np.asarray(sigmas, dtype=np.float64)
+    good = np.isfinite(sigmas)
+    if not np.any(good):
+        return np.nan
+    return float(np.sqrt(np.sum(sigmas[good] ** 2)))
+
+
+def _cap_sig_array(values, errors):
+    values = np.asarray(values, dtype=np.float64)
+    errors = np.asarray(errors, dtype=np.float64)
+    out = np.full(values.shape, np.nan, dtype=np.float64)
+    good = np.isfinite(values) & np.isfinite(errors) & (errors > 0.0)
+    out[good] = values[good] / errors[good]
+    return out
+
+
+def _cap_diff_sig_array(values_a, errors_a, values_b, errors_b):
+    values_a = np.asarray(values_a, dtype=np.float64)
+    errors_a = np.asarray(errors_a, dtype=np.float64)
+    values_b = np.asarray(values_b, dtype=np.float64)
+    errors_b = np.asarray(errors_b, dtype=np.float64)
+    diff = values_a - values_b
+    diff_error = np.sqrt(errors_a ** 2 + errors_b ** 2)
+    out = np.full(diff.shape, np.nan, dtype=np.float64)
+    good = np.isfinite(diff) & np.isfinite(diff_error) & (diff_error > 0.0)
+    out[good] = diff[good] / diff_error[good]
+    return out
+
+
 def print_cap_significance_tables(all_bin_results):
     sector_columns = [
         "mass_bin",
         "theta_arcmin",
-        "major_mean",
-        "major_err",
         "major_sigma0",
-        "minor_mean",
-        "minor_err",
         "minor_sigma0",
-        "major_minus_minor",
-        "major_minus_minor_err",
-        "major_minus_minor_sigma",
+        "difference_sigma",
     ]
     sector_rows = []
+    total_zero_rows = []
+    total_difference_rows = []
 
     for i_bin, bin_result in enumerate(all_bin_results):
         mass_lo = bin_result.get("mass_lo", MASS_BINS[i_bin][0])
@@ -1916,36 +1942,43 @@ def print_cap_significance_tables(all_bin_results):
         if maj_m is None or maj_s is None or min_m is None or min_s is None:
             continue
 
-        for theta, a_m, a_s, b_m, b_s in zip(CAP_RADII_ARCMIN, maj_m, maj_s, min_m, min_s):
-            diff, diff_err, diff_sig = _cap_diff_sig(a_m, a_s, b_m, b_s)
+        maj_sig = _cap_sig_array(maj_m, maj_s)
+        min_sig = _cap_sig_array(min_m, min_s)
+        diff_sig = _cap_diff_sig_array(maj_m, maj_s, min_m, min_s)
+
+        for theta, a_sig, b_sig, d_sig in zip(CAP_RADII_ARCMIN, maj_sig, min_sig, diff_sig):
             sector_rows.append([
                 mass_label,
                 f"{float(theta):.2f}",
-                _cap_fmt_value(a_m),
-                _cap_fmt_value(a_s),
-                _cap_fmt_sigma(_cap_sig(a_m, a_s)),
-                _cap_fmt_value(b_m),
-                _cap_fmt_value(b_s),
-                _cap_fmt_sigma(_cap_sig(b_m, b_s)),
-                _cap_fmt_value(diff),
-                _cap_fmt_value(diff_err),
-                _cap_fmt_sigma(diff_sig),
+                _cap_fmt_sigma(a_sig),
+                _cap_fmt_sigma(b_sig),
+                _cap_fmt_sigma(abs(d_sig)),
             ])
+
+        total_zero_rows.append([
+            mass_label,
+            "major",
+            _cap_fmt_sigma(_cap_total_sigma(maj_sig)),
+        ])
+        total_zero_rows.append([
+            mass_label,
+            "minor",
+            _cap_fmt_sigma(_cap_total_sigma(min_sig)),
+        ])
+        total_difference_rows.append([
+            mass_label,
+            "major_vs_minor",
+            _cap_fmt_sigma(_cap_total_sigma(diff_sig)),
+        ])
 
     _print_cap_table("CAP significance table: major versus minor sector", sector_columns, sector_rows)
 
     age_columns = [
         "mass_bin",
         "theta_arcmin",
-        "low_mean",
-        "low_err",
         "low_sigma0",
-        "high_mean",
-        "high_err",
         "high_sigma0",
-        "low_minus_high",
-        "low_minus_high_err",
-        "low_minus_high_sigma",
+        "difference_sigma",
     ]
 
     for scheme_key, title in [
@@ -1969,24 +2002,56 @@ def print_cap_significance_tables(all_bin_results):
             if low_m is None or low_s is None or high_m is None or high_s is None:
                 continue
 
-            for theta, a_m, a_s, b_m, b_s in zip(CAP_RADII_ARCMIN, low_m, low_s, high_m, high_s):
-                diff, diff_err, diff_sig = _cap_diff_sig(a_m, a_s, b_m, b_s)
+            low_sig = _cap_sig_array(low_m, low_s)
+            high_sig = _cap_sig_array(high_m, high_s)
+            diff_sig = _cap_diff_sig_array(low_m, low_s, high_m, high_s)
+
+            for theta, a_sig, b_sig, d_sig in zip(CAP_RADII_ARCMIN, low_sig, high_sig, diff_sig):
                 age_rows.append([
                     mass_label,
                     f"{float(theta):.2f}",
-                    _cap_fmt_value(a_m),
-                    _cap_fmt_value(a_s),
-                    _cap_fmt_sigma(_cap_sig(a_m, a_s)),
-                    _cap_fmt_value(b_m),
-                    _cap_fmt_value(b_s),
-                    _cap_fmt_sigma(_cap_sig(b_m, b_s)),
-                    _cap_fmt_value(diff),
-                    _cap_fmt_value(diff_err),
-                    _cap_fmt_sigma(diff_sig),
+                    _cap_fmt_sigma(a_sig),
+                    _cap_fmt_sigma(b_sig),
+                    _cap_fmt_sigma(abs(d_sig)),
                 ])
+
+            if scheme_key == "mass_age":
+                low_label = "lowest_mass_weighted_age"
+                high_label = "highest_mass_weighted_age"
+                diff_label = "lowest_vs_highest_mass_weighted_age"
+            else:
+                low_label = "lowest_light_weighted_age"
+                high_label = "highest_light_weighted_age"
+                diff_label = "lowest_vs_highest_light_weighted_age"
+
+            total_zero_rows.append([
+                mass_label,
+                low_label,
+                _cap_fmt_sigma(_cap_total_sigma(low_sig)),
+            ])
+            total_zero_rows.append([
+                mass_label,
+                high_label,
+                _cap_fmt_sigma(_cap_total_sigma(high_sig)),
+            ])
+            total_difference_rows.append([
+                mass_label,
+                diff_label,
+                _cap_fmt_sigma(_cap_total_sigma(diff_sig)),
+            ])
 
         _print_cap_table(title, age_columns, age_rows)
 
+    _print_cap_table(
+        "CAP total significance from zero",
+        ["mass_bin", "profile", "total_sigma0"],
+        total_zero_rows,
+    )
+    _print_cap_table(
+        "CAP total significance of differences",
+        ["mass_bin", "comparison", "total_difference_sigma"],
+        total_difference_rows,
+    )
 
 # ============================================================
 # MAIN PIPELINE
