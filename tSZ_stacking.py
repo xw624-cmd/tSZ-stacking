@@ -10,14 +10,11 @@ This code produces five summary PDFs:
 4. summary_stellar_age_cap_profiles_1x3.pdf
 5. summary_radio_full_stack_1x3.pdf
 
-As well as 7 histograms:
+As well as these histogram/weight diagnostic PDFs:
 1. summary_stellar_age_hist_mass_1x3.pdf
-2. summary_stellar_age_hist_redshift_1x3.pdf
-3. summary_stellar_age_hist_ebv_1x3.pdf
-4. summary_stellar_age_hist_age_log_1x3.pdf
-5. summary_oriented_hist_ba_selected_1x3.pdf
-6. summary_photo_model_hist_delta_ba_dev_minus_exp_1x3.pdf
-7. summary_photo_model_hist_folded_pa_difference_1x3.pdf
+2. summary_stellar_age_hist_mass_weighted_1x3.pdf
+3. summary_stellar_age_mass_weights_1x3.pdf
+4. summary_stellar_age_hist_ebv_1x3.pdf
 """
 
 import os
@@ -301,12 +298,10 @@ HIST_ZERO_LINE_COLOR = "0.5"
 HIST_ZERO_LINE_WIDTH = 0.6
 HIST_ZERO_LINE_STYLE = "--"
 
-# Median annotations for the four stellar-age split histograms.
-# These affect only:
+# Median annotations for the stellar-age split histograms.
+# These affect only the still-enabled age-split histogram PDFs:
 #   summary_stellar_age_hist_mass_1x3.pdf
-#   summary_stellar_age_hist_redshift_1x3.pdf
 #   summary_stellar_age_hist_ebv_1x3.pdf
-#   summary_stellar_age_hist_age_log_1x3.pdf
 HIST_SHOW_MEDIAN_IN_LEGEND = True
 HIST_MEDIAN_SCI_PRECISION = 2
 HIST_MEDIAN_TEXT = r"{\rm med}"
@@ -1175,7 +1170,7 @@ def stack_from_cache(h5f, mask, label="", weights=None):
 
 
 # ============================================================
-# FOUR REQUESTED SUMMARY PLOTS
+# SUMMARY PLOT OUTPUTS
 # ============================================================
 
 SUMMARY_PDF_NAMES = [
@@ -1187,12 +1182,7 @@ SUMMARY_PDF_NAMES = [
     "summary_stellar_age_hist_mass_1x3.pdf",
     "summary_stellar_age_hist_mass_weighted_1x3.pdf",
     "summary_stellar_age_mass_weights_1x3.pdf",
-    "summary_stellar_age_hist_redshift_1x3.pdf",
     "summary_stellar_age_hist_ebv_1x3.pdf",
-    "summary_stellar_age_hist_age_log_1x3.pdf",
-    "summary_oriented_hist_ba_selected_1x3.pdf",
-    "summary_photo_model_hist_delta_ba_dev_minus_exp_1x3.pdf",
-    "summary_photo_model_hist_folded_pa_difference_1x3.pdf",
 ]
 
 
@@ -3271,12 +3261,7 @@ def main():
     plot_summary_age_split_histograms(all_bin_results, h5f, SUMMARY_DIR, "logm")
     plot_summary_age_split_weighted_mass_histograms(all_bin_results, h5f, SUMMARY_DIR)
     plot_summary_age_split_mass_weight_values(all_bin_results, h5f, SUMMARY_DIR)
-    plot_summary_age_split_histograms(all_bin_results, h5f, SUMMARY_DIR, "z")
     plot_summary_age_split_histograms(all_bin_results, h5f, SUMMARY_DIR, "EBV")
-    plot_summary_age_split_histograms(all_bin_results, h5f, SUMMARY_DIR, "age_log")
-    plot_summary_oriented_selected_ba_histograms(all_bin_results, h5f, SUMMARY_DIR)
-    plot_summary_photo_model_delta_ba_histograms(all_bin_results, h5f, SUMMARY_DIR)
-    plot_summary_photo_model_folded_pa_difference_histograms(all_bin_results, h5f, SUMMARY_DIR)
     save_cap_covariances(all_bin_results, SUMMARY_DIR)
     print_cap_significance_tables(all_bin_results)
 
