@@ -36,7 +36,6 @@ from scipy import spatial
 import h5py
 
 os.environ["PATH"] = (
-    "/usr/local/texlive/2025/bin/universal-darwin:"
     "/Library/TeX/texbin:"
     + os.environ.get("PATH", "")
 )
@@ -53,10 +52,10 @@ plt.rcParams.update({
 # ============================================================
 # CONFIG
 # ============================================================
-FIREFLY_PATH = "/Users/jerrywang/Documents/Battaglia_research/Project_tsz_stacking/sdss_firefly-26.fits"
-PHOTO_PATH   = "/Users/jerrywang/Documents/Battaglia_research/Project_tsz_stacking/photoPosPlate-dr17.fits"
-TSZ_MAP_PATH = "/Users/jerrywang/Documents/Battaglia_research/Project_tsz_stacking/act-planck_dr6.02_nilc_ComptonY_deproj_cib_1.2_24.0.fits"
-FIRST_PATH   = "/Users/jerrywang/Documents/Battaglia_research/Project_tsz_stacking/first_14dec17.fits"
+FIREFLY_PATH = "/Users/jerrywang/Documents/Battaglia_research/sdss_firefly-26.fits"
+PHOTO_PATH   = "/Users/jerrywang/Documents/Battaglia_research/photoPosPlate-dr17.fits"
+TSZ_MAP_PATH = "/Users/jerrywang/Documents/Battaglia_research/act-planck_dr6.02_nilc_ComptonY_deproj_cib_1.2_24.0.fits"
+FIRST_PATH   = "/Users/jerrywang/Documents/Battaglia_research/first_14dec17.fits"
 
 # Photo shape settings. Keep this on for oriented stacks.
 USE_PHOTO_SHAPE      = True
@@ -95,8 +94,11 @@ USE_REDSHIFT_CUT = True
 Z_MIN = 0.2
 Z_MAX = 0.6
 
-USE_EBV_CUT = True
+USE_EBV_CUT = False
 EBV_MAX = 0.1
+# Used only when USE_EBV_CUT=False, so the no-cut dust histogram does not stop at 0.1.
+# Adjust after you inspect the printed EBV distribution if needed.
+EBV_HIST_MAX_NO_CUT = 0.5
 
 RADIO_ONLY = False
 EXCLUDE_RADIO = True
@@ -140,7 +142,7 @@ N_BOOT = 10000
 SEED = 42
 
 # Output folder for the four requested PDFs.
-SUMMARY_DIR = "./mass_weighted_oriented_runs_3bins/summary"
+SUMMARY_DIR = "./mass_weighted_oriented_runs_3bins/summary_no_ebv_cut"
 
 # Radio-only summary stack row. Use unoriented by default in this pipeline.
 RADIO_STACK_KEY = "stack_unori"
@@ -2613,7 +2615,8 @@ def _hist_bin_edges(var_name, mass_lo=None, mass_hi=None):
     if var_name == "z":
         return np.linspace(Z_MIN, Z_MAX, HIST_N_BINS + 1)
     if var_name == "EBV":
-        return np.linspace(0.0, EBV_MAX, HIST_N_BINS + 1)
+        ebv_hi = EBV_MAX if USE_EBV_CUT else EBV_HIST_MAX_NO_CUT
+        return np.linspace(0.0, ebv_hi, HIST_N_BINS + 1)
     if var_name == "age_log":
         return np.linspace(HIST_AGE_LOG_MIN, HIST_AGE_LOG_MAX, HIST_N_BINS + 1)
     raise ValueError(f"Unknown histogram variable: {var_name}")
