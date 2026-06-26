@@ -63,7 +63,6 @@ PHOTO_MATCH_ARCSEC   = 1.0
 PHOTO_FRACDEV_THRESH = 0.5
 PHOTO_TYPE_GALAXY    = 3
 BA_MAX               = 1.0
-INTERPOLATION_ORDER = 1
 
 # Orientation and sector settings.
 WEDGE_HALF_DEG   = 45.0
@@ -477,19 +476,6 @@ def sample_large_stamp_to_output(
         out[inside] = interp(yg_src[inside], xg_src[inside], grid=False)
 
     return out.astype(np.float64)
-
-
-def rotate_stamp(stamp, angle_deg):
-    """Legacy fallback: rotate a same-size stamp with scipy."""
-    return rotate(
-        stamp,
-        angle_deg,
-        reshape=False,
-        order=INTERPOLATION_ORDER,
-        mode="constant",
-        cval=0.0,
-    )
-
 
 def apply_percentile_split(values, remove_middle_pct=30.0):
     """Return low and high tail masks after removing the middle percentage."""
