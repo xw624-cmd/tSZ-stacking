@@ -375,6 +375,50 @@ def print_mass_bin_accounting(label, mask, logm, previous_mask=None, indent="  "
                 f"(lost {lost_bin:,}, kept {_fmt_pct(n_bin, prev_bin)})"
             )
 
+def print_cumulative_cut_table(stages, logm, final_label=None, mass_bins=MASS_BINS):
+    """Print a compact cumulative selection table.
+
+    stages : list of (label, cumulative_boolean_mask). Each mask is the
+        running survivor set up to and including that stage, defined on the
+        full Firefly row array. "Total" is the mask sum; the mass-bin columns
+        split that survivor set by stellar mass.
+    logm : per-row log10 stellar mass, used only for the mass-bin split.
+    final_label : if given, repeat the last stage's mask under this label.
+    """
+    logm = np.asarray(logm)
+    bin_masks = [_mass_bin_mask(logm, lo, hi) for lo, hi in mass_bins]
+    bin_headers = [f"({lo:.1f},{hi:.1f}]" for lo, hi in mass_bins]
+
+    label_w = max([len("Cut stage")] + [len(lbl) for lbl, _ in stages]) + 2
+    if final_label is not None:
+        label_w = max(label_w, len(final_label) + 2)
+    total_w = 12
+    bin_w = 13
+
+    header = (
+        f"{'Cut stage':<{label_w}}"
+        f"{'Total':>{total_w}}"
+        + "".join(f"{h:>{bin_w}}" for h in bin_headers)
+    )
+    rule = "-" * len(header)
+
+    def _row(label, mask):
+        mask = np.asarray(mask, dtype=bool)
+        total = int(np.sum(mask))
+        cells = "".join(f"{int(np.sum(mask & bm)):>{bin_w},}" for bm in bin_masks)
+        print(f"{label:<{label_w}}{total:>{total_w},}{cells}")
+
+    print("\nCumulative selection "
+          "(mass bins: mass_lo < log10(M*/Msun) <= mass_hi)")
+    print(header)
+    print(rule)
+    for label, mask in stages:
+        _row(label, mask)
+    if final_label is not None:
+        print(rule)
+        _row(final_label, stages[-1][1])
+
+
 def _cap_to_plot_units(values):
     """CAP values are already in y arcmin^2."""
     if values is None:
@@ -2087,45 +2131,13 @@ def build_selection_and_cache():
     if USE_EBV_CUT:
         ebv_mask &= (EBV_ff >= 0.0) & (EBV_ff <= EBV_MAX)
 
-    broad_mask = finite_data_mask & mass_range_mask & redshift_mask & ebv_mask
-
-    print("\nCatalog cut flow:")
-    all_rows_mask = np.ones(n_firefly, dtype=bool)
-    print_mass_bin_accounting("raw Firefly rows", all_rows_mask, logm_ff)
-
-    running_mask = all_rows_mask & finite_data_mask
-    print_mass_bin_accounting("after finite RA/Dec/logM/z/age/metallicity/E(B-V) data", running_mask, logm_ff, all_rows_mask)
-
-    prev_mask = running_mask
-    running_mask = running_mask & mass_range_mask
-    print_mass_bin_accounting(
-        f"after mass range ({CACHE_LOG_MASS_MIN:.1f}, {CACHE_LOG_MASS_MAX:.1f}]",
-        running_mask,
-        logm_ff,
-        prev_mask,
-    )
-
-    if USE_REDSHIFT_CUT:
-        prev_mask = running_mask
-        running_mask = running_mask & redshift_mask
-        print_mass_bin_accounting(
-            f"after redshift cut [{Z_MIN:.2f}, {Z_MAX:.2f}]",
-            running_mask,
-            logm_ff,
-            prev_mask,
-        )
-
-    if USE_EBV_CUT:
-        prev_mask = running_mask
-        running_mask = running_mask & ebv_mask
-        print_mass_bin_accounting(
-            f"after E(B-V) cut [0.000, {EBV_MAX:.3f}]",
-            running_mask,
-            logm_ff,
-            prev_mask,
-        )
-
-    print_mass_bin_accounting("broad sample", broad_mask, logm_ff)
+    # Cumulative selection masks. broad_mask is identical to the original
+    # finite & mass & z & E(B-V) chain; the intermediate masks just let the
+    # cut-flow table report each running survivor set.
+    cum_mass = finite_data_mask & mass_range_mask
+    cum_z = cum_mass & redshift_mask
+    cum_ebv = cum_z & ebv_mask
+    broad_mask = cum_ebv
 
     pa_ff = np.zeros(n_firefly, dtype=np.float64)
     ab_ff = np.ones(n_firefly, dtype=np.float64)
@@ -2179,15 +2191,9 @@ def build_selection_and_cache():
         )
 
         shape_mask = valid_shape_ff & finite_shape_mask & (ab_ff < BA_MAX)
-
         print(f"  valid photo shape and 0 < selected b/a < {BA_MAX:.3f}: {(shape_mask & broad_mask).sum():,}")
     else:
         shape_mask = np.ones(n_firefly, dtype=bool)
-
-    shape_sel = broad_mask & shape_mask
-    print("\nPhoto-shape accounting:")
-    print_mass_bin_accounting("before photo shape selection", broad_mask, logm_ff)
-    print_mass_bin_accounting(f"after photo shape and 0 < selected b/a < {BA_MAX:.3f}", shape_sel, logm_ff, broad_mask)
 
     print("\nChecking map coverage...")
     inside_map = np.zeros(n_firefly, dtype=bool)
@@ -2199,11 +2205,6 @@ def build_selection_and_cache():
         STAMP_SOURCE_RADIUS_ARCMIN,
     )
     print(f"  inside map: {(inside_map & map_candidates).sum():,} / {map_candidates.sum():,}")
-
-    map_sel = broad_mask & shape_mask & inside_map
-    print("\nMap-footprint accounting:")
-    print_mass_bin_accounting("before full-stamp map-footprint cut", shape_sel, logm_ff)
-    print_mass_bin_accounting("after full-stamp map-footprint cut", map_sel, logm_ff, shape_sel)
 
     has_radio_ff = np.zeros(n_firefly, dtype=bool)
     if FIRST_PATH is not None:
@@ -2217,20 +2218,6 @@ def build_selection_and_cache():
             safety=SAFETY,
         )
 
-        print("\nFIRST radio accounting:")
-        print_mass_bin_accounting("radio-candidate parent sample", radio_candidates, logm_ff)
-        print_mass_bin_accounting(
-            f"FIRST-matched galaxies within {FIRST_MATCH_ARCSEC:.1f} arcsec",
-            radio_candidates & has_radio_ff,
-            logm_ff,
-        )
-        print_mass_bin_accounting(
-            "non-radio galaxies after FIRST exclusion",
-            radio_candidates & ~has_radio_ff,
-            logm_ff,
-            radio_candidates,
-        )
-
     if RADIO_ONLY:
         radio_mask = has_radio_ff
     elif EXCLUDE_RADIO:
@@ -2242,20 +2229,40 @@ def build_selection_and_cache():
     base_sel = cache_sel & radio_mask
     radio_sel = cache_sel & has_radio_ff
 
+    # Cumulative cut-flow table (replaces the old per-stage accounting block).
+    cum_photo = broad_mask & shape_mask
+    cum_map = cum_photo & inside_map
+    cum_radio = cum_map & ~has_radio_ff
+
+    cut_stages = [(f"1. Mass cut ({CACHE_LOG_MASS_MIN:.1f}, {CACHE_LOG_MASS_MAX:.1f}]", cum_mass)]
+    _s = 1
+    if USE_REDSHIFT_CUT:
+        _s += 1
+        cut_stages.append((f"{_s}. Redshift cut [{Z_MIN:.2f}, {Z_MAX:.2f}]", cum_z))
+    if USE_EBV_CUT:
+        _s += 1
+        cut_stages.append((f"{_s}. E(B-V) cut [0.000, {EBV_MAX:.3f}]", cum_ebv))
+    _s += 1
+    cut_stages.append((f"{_s}. SDSS DR17 photo cross-match", cum_photo))
+    _s += 1
+    cut_stages.append((f"{_s}. ACT-Planck map footprint", cum_map))
+    _s += 1
+    cut_stages.append((f"{_s}. FIRST radio removal ({FIRST_MATCH_ARCSEC:.0f} arcsec)", cum_radio))
+
+    print_cumulative_cut_table(cut_stages, logm_ff, final_label="FINAL non-radio sample")
+
     print("\nFinal samples:")
     print(f"  main selected galaxies: {base_sel.sum():,} / {n_firefly:,}")
     print(f"  radio galaxies: {radio_sel.sum():,} / {n_firefly:,}")
     print(f"  cached galaxies: {cache_sel.sum():,} / {n_firefly:,}")
 
-    print("\nFinal sample accounting by mass bin:")
-    print_mass_bin_accounting("cache selection before radio split", cache_sel, logm_ff)
-    print_mass_bin_accounting("main non-radio selection", base_sel, logm_ff, cache_sel)
-    print_mass_bin_accounting("radio-only selection", radio_sel, logm_ff)
     if base_sel.sum() == 0:
         raise RuntimeError("No galaxies survive the main full selection.")
     if cache_sel.sum() == 0:
         raise RuntimeError("No galaxies survive the cache selection.")
 
+    # ---- unchanged from here down (test thumbnails, cache build/open,
+    #      extraction, post-extraction accounting, return) ----
     r_rad_test = STAMP_RADIUS_ARCMIN * np.pi / 180.0 / 60.0
     r_rad_source_test = STAMP_SOURCE_RADIUS_ARCMIN * np.pi / 180.0 / 60.0
     test = None
