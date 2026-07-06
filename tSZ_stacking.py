@@ -93,11 +93,11 @@ USE_REDSHIFT_CUT = True
 Z_MIN = 0.2
 Z_MAX = 0.6
 
-USE_EBV_CUT = False
+USE_EBV_CUT = True
 EBV_MAX = 0.1
 # Used only when USE_EBV_CUT=False, so the no-cut dust histogram does not stop at 0.1.
 # Adjust after you inspect the printed EBV distribution if needed.
-EBV_HIST_MAX_NO_CUT = 0.5
+EBV_HIST_MAX_NO_CUT = 0.6
 
 RADIO_ONLY = False
 EXCLUDE_RADIO = True
@@ -166,7 +166,7 @@ SPLIT_MASS_WEIGHT_CLIP = None
 HIST_YLIMS = {
     "logm": (0.0, 0.15),
     "z":    (0.0, 0.4),
-    "EBV":  (0.0, 0.6),
+    "EBV":  (0.0, 0.8),
     "age_log": (0.0, 1),
     "ba_selected": (0.0, 0.15),
     "delta_ba": (0.0, 1),
