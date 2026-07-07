@@ -30,7 +30,6 @@ from matplotlib.colors import TwoSlopeNorm
 from matplotlib.ticker import FuncFormatter, MaxNLocator
 from astropy.io import fits
 from pixell import enmap, reproject, utils
-from scipy.ndimage import rotate
 from scipy.interpolate import RectBivariateSpline
 from scipy import spatial
 import h5py
@@ -52,10 +51,10 @@ plt.rcParams.update({
 # ============================================================
 # CONFIG
 # ============================================================
-FIREFLY_PATH = "/Users/jerrywang/Documents/Battaglia_research/sdss_firefly-26.fits"
-PHOTO_PATH   = "/Users/jerrywang/Documents/Battaglia_research/photoPosPlate-dr17.fits"
-TSZ_MAP_PATH = "/Users/jerrywang/Documents/Battaglia_research/act-planck_dr6.02_nilc_ComptonY_deproj_cib_1.2_24.0.fits"
-FIRST_PATH   = "/Users/jerrywang/Documents/Battaglia_research/first_14dec17.fits"
+FIREFLY_PATH = "/Users/jerrywang/Documents/Battaglia_research/Project1/Catalogs/sdss_firefly-26.fits"
+PHOTO_PATH   = "/Users/jerrywang/Documents/Battaglia_research/Project1/Catalogs/photoPosPlate-dr17.fits"
+TSZ_MAP_PATH = "/Users/jerrywang/Documents/Battaglia_research/Project1/Catalogs/act-planck_dr6.02_nilc_ComptonY_deproj_cib_1.2_24.0.fits"
+FIRST_PATH   = "/Users/jerrywang/Documents/Battaglia_research/Project1/Catalogs/first_14dec17.fits"
 
 # Photo shape settings. Keep this on for oriented stacks.
 USE_PHOTO_SHAPE      = True
@@ -78,7 +77,7 @@ CAP_RADII_ARCMIN  = np.linspace(CAP_AP_MIN_ARCMIN, CAP_AP_MAX_ARCMIN, CAP_N_AP)
 # CAP units. Pixell/reproject handles the sky projection when extracting
 # each thumbnail. After extraction, the local cutout is treated as a flat
 # angular grid, so CAP values are reported in y arcmin^2.
-CAP_UNIT_LABEL = r"$\mathrm{CAP}\ [y\,\mathrm{arcmin}^{2}]$"
+# The plot label for this unit is defined below in PLOTTING AESTHETICS.
 
 # Catalog cuts.
 MASS_BINS = [
@@ -97,7 +96,7 @@ USE_EBV_CUT = True
 EBV_MAX = 0.1
 # Used only when USE_EBV_CUT=False, so the no-cut dust histogram does not stop at 0.1.
 # Adjust after you inspect the printed EBV distribution if needed.
-EBV_HIST_MAX_NO_CUT = 0.6
+EBV_HIST_MAX_NO_CUT = 0.7
 
 RADIO_ONLY = False
 EXCLUDE_RADIO = True
@@ -141,7 +140,7 @@ N_BOOT = 10000
 SEED = 42
 
 # Output folder for the four requested PDFs.
-SUMMARY_DIR = "./mass_weighted_oriented_runs_3bins/summary_no_ebv_cut"
+SUMMARY_DIR = "./run_output"
 
 # Radio-only summary stack row. Use unoriented by default in this pipeline.
 RADIO_STACK_KEY = "stack_unori"
@@ -165,22 +164,8 @@ SPLIT_MASS_WEIGHT_CLIP = None
 
 HIST_YLIMS = {
     "logm": (0.0, 0.15),
-    "z":    (0.0, 0.4),
     "EBV":  (0.0, 0.8),
-    "age_log": (0.0, 1),
-    "ba_selected": (0.0, 0.15),
-    "delta_ba": (0.0, 1),
-    "pa_folded_diff": (0.0, 1),
 }
-
-HIST_AGE_LOG_MIN = 9.2
-HIST_AGE_LOG_MAX = 10.25
-BA_HIST_MIN = 0.0
-BA_HIST_MAX = 1.0
-DELTA_BA_HIST_MIN = -0.24
-DELTA_BA_HIST_MAX = 0.24
-PA_DIFF_HIST_MIN = 0.0
-PA_DIFF_HIST_MAX = 90.0
 
 
 # ============================================================
@@ -199,18 +184,18 @@ SAVEFIG_BBOX_INCHES = "tight"
 SAVEFIG_PAD_INCHES = 0.0
 
 # Shared stack-image aesthetics.
-STACK_PANEL_TITLE_SIZE = 10
+STACK_PANEL_TITLE_SIZE = 15
 STACK_PANEL_TITLE_PAD = 14
-STACK_SUPTITLE_SIZE = 15
-STACK_AXIS_LABEL_SIZE = 8
-STACK_TICK_LABEL_SIZE = 7
-STACK_N_LABEL_SIZE = 8
+STACK_SUPTITLE_SIZE = 20
+STACK_AXIS_LABEL_SIZE = 15
+STACK_TICK_LABEL_SIZE = 9
+STACK_N_LABEL_SIZE = 10
 STACK_NO_DATA_SIZE = 9
-STACK_ROW_LABEL_SIZE = 11
+STACK_ROW_LABEL_SIZE = 16
 STACK_XY_TICK_NBINS = 5
-STACK_COLORBAR_TICK_NBINS = 7
-STACK_COLORBAR_LABEL_SIZE = 11
-STACK_COLORBAR_TICK_SIZE = 9
+STACK_COLORBAR_TICK_NBINS = 9
+STACK_COLORBAR_LABEL_SIZE = 13
+STACK_COLORBAR_TICK_SIZE = 11
 STACK_COLORBAR_WIDTH = 0.018
 STACK_COLORBAR_PAD = 0.012
 STACK_N_LABEL_X = 0.04
@@ -258,13 +243,13 @@ CAP_RIGHT = 0.98
 CAP_BOTTOM = 0.15
 CAP_TOP = 0.80
 CAP_WSPACE = 0.0
-CAP_PANEL_TITLE_SIZE = 10
+CAP_PANEL_TITLE_SIZE = 16
 CAP_PANEL_TITLE_PAD = 14
-CAP_SUPTITLE_SIZE = 15
+CAP_SUPTITLE_SIZE = 20
 CAP_SUPTITLE_Y = 0.925
 CAP_AXIS_LABEL_SIZE_SECTOR = 16
-CAP_AXIS_LABEL_SIZE_AGE = 11
-CAP_TICK_LABEL_SIZE = 9
+CAP_AXIS_LABEL_SIZE_AGE = 16
+CAP_TICK_LABEL_SIZE = 15
 CAP_Y_TICK_NBINS = 10
 CAP_LEGEND_LOC_SECTOR = "upper left"
 CAP_LEGEND_SIZE_SECTOR = 15
@@ -285,15 +270,15 @@ HIST_RIGHT = 0.98
 HIST_BOTTOM = 0.15
 HIST_TOP = 0.80
 HIST_WSPACE = 0.0
-HIST_PANEL_TITLE_SIZE = 10
+HIST_PANEL_TITLE_SIZE = 15
 HIST_PANEL_TITLE_PAD = 14
-HIST_SUPTITLE_SIZE = 15
+HIST_SUPTITLE_SIZE = 20
 HIST_SUPTITLE_Y = 0.925
-HIST_AXIS_LABEL_SIZE = 11
-HIST_TICK_LABEL_SIZE = 9
+HIST_AXIS_LABEL_SIZE = 15
+HIST_TICK_LABEL_SIZE = 12
 HIST_X_TICK_NBINS = 10
 HIST_LEGEND_LOC = "upper right"
-HIST_LEGEND_SIZE = 7
+HIST_LEGEND_SIZE = 10
 HIST_LINEWIDTH = 1.8
 HIST_ZERO_LINE_COLOR = "0.5"
 HIST_ZERO_LINE_WIDTH = 0.6
@@ -306,7 +291,64 @@ HIST_ZERO_LINE_STYLE = "--"
 HIST_SHOW_MEDIAN_IN_LEGEND = True
 HIST_MEDIAN_SCI_PRECISION = 2
 HIST_MEDIAN_TEXT = r"{\rm med}"
-HIST_AGE_LOG_LEGEND_MEDIAN_IN_YEARS = True
+
+# ------------------------------------------------------------
+# Plot text labels and titles.
+# Keep plot wording here, not inside plotting functions.
+# ------------------------------------------------------------
+
+# Shared mass-bin and annotation labels.
+MASS_BIN_LABEL_TEMPLATE = (
+    r"${mass_lo:.1f} < \log_{{10}}\!\left(\frac{{M_\ast}}{{M_\odot}}\right) "
+    r"\leq {mass_hi:.1f}$"
+)
+N_STACKED_LABEL_TEMPLATE = r"$N_{{\rm stacked}} = {n_stacked:,}$"
+
+# Shared image-stack labels.
+STACK_X_LABEL = r"$x\ {\rm [arcmin]}$"
+STACK_Y_LABEL = r"$y\ {\rm [arcmin]}$"
+STACK_COLORBAR_LABEL = r"$y\ {\rm [dimensionless]}$"
+STACK_NO_DATA_LABEL = r"{\rm no\ data}"
+
+STACK_ROW_LABEL_UNORIENTED = r"{\rm Unoriented}"
+STACK_ROW_LABEL_ORIENTED = r"{\rm Oriented}"
+
+STACK_FULL_SUPTITLE = r"{\rm Stacked\ Compton\ }$y${\rm\ Maps:\ Unoriented\ and\ Optically\ Aligned}"
+STACK_AGE_SUPTITLE = r"{\rm Stellar-age-selected\ Stacked\ Compton\ }$y${\rm\ Maps}"
+STACK_RADIO_SUPTITLE = r"{\rm FIRST-matched\ Radio-source\ Stacked\ Compton\ }$y${\rm\ Maps}"
+
+# Stellar-age split labels.
+AGE_LABEL_MASS_YOUNG_TEMPLATE = r"{{\rm Young\ tail\ ({tail_pct}\%),\ mass-weighted\ age}}"
+AGE_LABEL_MASS_OLD_TEMPLATE = r"{{\rm Old\ tail\ ({tail_pct}\%),\ mass-weighted\ age}}"
+AGE_LABEL_LIGHT_YOUNG_TEMPLATE = r"{{\rm Young\ tail\ ({tail_pct}\%),\ light-weighted\ age}}"
+AGE_LABEL_LIGHT_OLD_TEMPLATE = r"{{\rm Old\ tail\ ({tail_pct}\%),\ light-weighted\ age}}"
+
+# CAP-profile labels.
+CAP_X_LABEL = r"$\theta_{\rm d}\ [{\rm arcmin}]$"
+CAP_Y_LABEL = r"$y_{\rm CAP}\ [y\,{\rm arcmin}^{2}]$"
+CAP_NO_SECTOR_DATA_LABEL = r"{\rm no\ sector\ CAP\ data}"
+CAP_MAJOR_SECTOR_LABEL = r"{\rm Major-axis\ sector}"
+CAP_MINOR_SECTOR_LABEL = r"{\rm Minor-axis\ sector}"
+CAP_SECTOR_SUPTITLE = r"{\rm Oriented-stack\ CAP\ Profiles:\ Major\ vs.\ Minor\ Axis}"
+CAP_AGE_SUPTITLE = r"{\rm Stellar-age-selected\ CAP\ Profiles}"
+
+# Histogram labels and titles.
+HIST_XLABELS = {
+    "logm": r"$\log_{10}\!\left(M_\ast/M_\odot\right)$",
+    "EBV": r"$E(B-V)$",
+}
+
+HIST_SUPTITLES = {
+    "logm": r"{\rm Stellar\ Mass\ Distribution}",
+    "EBV": r"{\rm Dust\ Reddening\ Distribution}",
+}
+
+HIST_FRACTION_Y_LABEL = r"$\mathrm{Fraction\ per\ bin}$"
+HIST_WEIGHTED_FRACTION_Y_LABEL = r"$\mathrm{Weighted\ fraction\ per\ bin}$"
+HIST_MEAN_MASS_WEIGHT_Y_LABEL = r"$\mathrm{Mean\ mass\ weight}$"
+
+HIST_WEIGHTED_MASS_SUPTITLE = r"{\rm Stellar\ Mass\ Distribution\ After\ Mass\ Weighting}"
+HIST_MASS_WEIGHTS_SUPTITLE = r"{\rm Applied\ Split\ Stack\ Mass\ Weights}"
 
 # ============================================================
 # SMALL HELPERS
@@ -428,7 +470,7 @@ def _cap_to_plot_units(values):
 
 def _cap_plot_axis_label():
     """CAP axis label for the y arcmin^2 convention."""
-    return CAP_UNIT_LABEL
+    return CAP_Y_LABEL
 
 
 def _cap_pixel_area_arcmin2(pixscale_arcmin):
@@ -1326,14 +1368,11 @@ def _prune_touching_xy_ticks(ax, nbins=STACK_XY_TICK_NBINS):
 
 
 def _mass_bin_label(mass_lo, mass_hi):
-    return (
-        rf"${mass_lo:.1f} < \log_{{10}}\!\left(\frac{{M_\ast}}{{M_\odot}}\right) "
-        rf"\leq {mass_hi:.1f}$"
-    )
+    return MASS_BIN_LABEL_TEMPLATE.format(mass_lo=mass_lo, mass_hi=mass_hi)
 
 
 def _n_stacked_label(n_success):
-    return rf"$N_{{\rm stacked}} = {int(n_success):,}$"
+    return N_STACKED_LABEL_TEMPLATE.format(n_stacked=int(n_success))
 
 
 def _collect_stack_values_from_results(all_bin_results):
@@ -1408,7 +1447,7 @@ def _imshow_stack_panel(ax, stack, pixscale, norm, n_success=None):
         ax.text(
             0.5,
             0.5,
-            r"{\rm no\ data}",
+            STACK_NO_DATA_LABEL,
             transform=ax.transAxes,
             ha="center",
             va="center",
@@ -1427,8 +1466,8 @@ def _imshow_stack_panel(ax, stack, pixscale, norm, n_success=None):
         0.5 * ny * pixscale,
     ]
     im = ax.imshow(stack, origin="lower", cmap="RdBu_r", norm=norm, extent=ext)
-    ax.set_xlabel(r"$x\ {\rm [arcmin]}$", fontsize=STACK_AXIS_LABEL_SIZE)
-    ax.set_ylabel(r"$y\ {\rm [arcmin]}$", fontsize=STACK_AXIS_LABEL_SIZE)
+    ax.set_xlabel(STACK_X_LABEL, fontsize=STACK_AXIS_LABEL_SIZE)
+    ax.set_ylabel(STACK_Y_LABEL, fontsize=STACK_AXIS_LABEL_SIZE)
     ax.tick_params(labelsize=STACK_TICK_LABEL_SIZE)
 
     if n_success is not None:
@@ -1468,8 +1507,8 @@ def plot_summary_full_mass_stacks(all_bin_results, out_dir, stack_norm):
     grid_right = _set_touching_square_grid(fig, axes, grid_left, grid_bottom, grid_top)
 
     row_defs = [
-        ("stack_unori", r"{\rm Unoriented}"),
-        ("stack_ori", r"{\rm Oriented}"),
+        ("stack_unori", STACK_ROW_LABEL_UNORIENTED),
+        ("stack_ori", STACK_ROW_LABEL_ORIENTED),
     ]
 
     last_im = None
@@ -1511,9 +1550,9 @@ def plot_summary_full_mass_stacks(all_bin_results, out_dir, stack_norm):
     if last_im is not None:
         cax = fig.add_axes([grid_right + STACK_COLORBAR_PAD, STACK_FULL_CBAR_BOTTOM, STACK_COLORBAR_WIDTH, STACK_FULL_CBAR_HEIGHT])
         cb = fig.colorbar(last_im, cax=cax)
-        _format_colorbar(cb, r"$y\ {\rm [dimensionless]}$")
+        _format_colorbar(cb, STACK_COLORBAR_LABEL)
 
-    fig.suptitle(r"{\rm Oriented\ Full\ Stack}", fontsize=STACK_SUPTITLE_SIZE, y=STACK_FULL_SUPTITLE_Y)
+    fig.suptitle(STACK_FULL_SUPTITLE, fontsize=STACK_SUPTITLE_SIZE, y=STACK_FULL_SUPTITLE_Y)
     path = os.path.join(out_dir, "summary_oriented_full_stack_2x3.pdf")
     _savefig(path)
     plt.close(fig)
@@ -1528,10 +1567,10 @@ def plot_summary_age_split_stacks(all_bin_results, out_dir, stack_norm):
     tail_pct = _split_tail_pct_label()
 
     row_defs = [
-        ("mass_age", "lo", rf"{{\rm Lowest\ {tail_pct}\%\ mass\ weighted\ age}}"),
-        ("mass_age", "hi", rf"{{\rm Highest\ {tail_pct}\%\ mass\ weighted\ age}}"),
-        ("light_age", "lo", rf"{{\rm Lowest\ {tail_pct}\%\ light\ weighted\ age}}"),
-        ("light_age", "hi", rf"{{\rm Highest\ {tail_pct}\%\ light\ weighted\ age}}"),
+        ("mass_age", "lo", AGE_LABEL_MASS_YOUNG_TEMPLATE.format(tail_pct=tail_pct)),
+        ("mass_age", "hi", AGE_LABEL_MASS_OLD_TEMPLATE.format(tail_pct=tail_pct)),
+        ("light_age", "lo", AGE_LABEL_LIGHT_YOUNG_TEMPLATE.format(tail_pct=tail_pct)),
+        ("light_age", "hi", AGE_LABEL_LIGHT_OLD_TEMPLATE.format(tail_pct=tail_pct)),
     ]
 
     nrows = len(row_defs)
@@ -1589,9 +1628,9 @@ def plot_summary_age_split_stacks(all_bin_results, out_dir, stack_norm):
     if last_im is not None:
         cax = fig.add_axes([grid_right + STACK_COLORBAR_PAD, STACK_AGE_CBAR_BOTTOM, STACK_COLORBAR_WIDTH, STACK_AGE_CBAR_HEIGHT])
         cb = fig.colorbar(last_im, cax=cax)
-        _format_colorbar(cb, r"$y\ {\rm [dimensionless]}$")
+        _format_colorbar(cb, STACK_COLORBAR_LABEL)
 
-    fig.suptitle(r"{\rm Stellar\ Age\ Stack}", fontsize=STACK_SUPTITLE_SIZE, y=STACK_AGE_SUPTITLE_Y)
+    fig.suptitle(STACK_AGE_SUPTITLE, fontsize=STACK_SUPTITLE_SIZE, y=STACK_AGE_SUPTITLE_Y)
     path = os.path.join(out_dir, "summary_stellar_age_stack_4x3.pdf")
     _savefig(path)
     plt.close(fig)
@@ -1630,7 +1669,7 @@ def plot_summary_sector_cap_profiles(all_bin_results, out_dir):
             ax.text(
                 0.5,
                 0.5,
-                r"{\rm no\ sector\ CAP\ data}",
+                CAP_NO_SECTOR_DATA_LABEL,
                 transform=ax.transAxes,
                 ha="center",
                 va="center",
@@ -1651,7 +1690,7 @@ def plot_summary_sector_cap_profiles(all_bin_results, out_dir):
                 capsize=CAP_ERROR_CAPSIZE,
                 lw=CAP_ERROR_LW,
                 ms=CAP_ERROR_MARKER_SIZE,
-                label=r"{\rm Major\ sector}",
+                label=CAP_MAJOR_SECTOR_LABEL,
             )
             ax.errorbar(
                 CAP_RADII_ARCMIN + 0.04,
@@ -1662,13 +1701,13 @@ def plot_summary_sector_cap_profiles(all_bin_results, out_dir):
                 capsize=CAP_ERROR_CAPSIZE,
                 lw=CAP_ERROR_LW,
                 ms=CAP_ERROR_MARKER_SIZE,
-                label=r"{\rm Minor\ sector}",
+                label=CAP_MINOR_SECTOR_LABEL,
             )
 
         ax.axhline(0, color=CAP_ZERO_LINE_COLOR, lw=CAP_ZERO_LINE_WIDTH, ls=CAP_ZERO_LINE_STYLE)
         ax.set_title(_mass_bin_label(mass_lo, mass_hi), fontsize=CAP_PANEL_TITLE_SIZE, pad=CAP_PANEL_TITLE_PAD)
         ax.tick_params(labelsize=CAP_TICK_LABEL_SIZE)
-        ax.set_xlabel(r"$\theta_d\ {\rm [arcmin]}$", fontsize=CAP_AXIS_LABEL_SIZE_SECTOR)
+        ax.set_xlabel(CAP_X_LABEL, fontsize=CAP_AXIS_LABEL_SIZE_SECTOR)
         if c == 0:
             ax.set_ylabel(_cap_plot_axis_label(), fontsize=CAP_AXIS_LABEL_SIZE_SECTOR)
         else:
@@ -1684,7 +1723,7 @@ def plot_summary_sector_cap_profiles(all_bin_results, out_dir):
         for ax in axes:
             _apply_scientific_y_ticks(ax)
 
-    fig.suptitle(r"{\rm Oriented\ Full\ Stack\ CAP\ profiles}", fontsize=CAP_SUPTITLE_SIZE, y=CAP_SUPTITLE_Y)
+    fig.suptitle(CAP_SECTOR_SUPTITLE, fontsize=CAP_SUPTITLE_SIZE, y=CAP_SUPTITLE_Y)
     path = os.path.join(out_dir, "summary_oriented_full_stack_cap_profiles_1x3.pdf")
     _savefig(path)
     plt.close(fig)
@@ -1699,10 +1738,10 @@ def plot_summary_age_split_cap_profiles(all_bin_results, out_dir):
     tail_pct = _split_tail_pct_label()
 
     curve_defs = [
-        ("mass_age", "lo", rf"{{\rm Lowest\ {tail_pct}\%\ mass\ weighted\ age}}", -0.09, "o"),
-        ("mass_age", "hi", rf"{{\rm Highest\ {tail_pct}\%\ mass\ weighted\ age}}", -0.03, "s"),
-        ("light_age", "lo", rf"{{\rm Lowest\ {tail_pct}\%\ light\ weighted\ age}}", 0.03, "^"),
-        ("light_age", "hi", rf"{{\rm Highest\ {tail_pct}\%\ light\ weighted\ age}}", 0.09, "D"),
+        ("mass_age", "lo", AGE_LABEL_MASS_YOUNG_TEMPLATE.format(tail_pct=tail_pct), -0.09, "o"),
+        ("mass_age", "hi", AGE_LABEL_MASS_OLD_TEMPLATE.format(tail_pct=tail_pct), -0.03, "s"),
+        ("light_age", "lo", AGE_LABEL_LIGHT_YOUNG_TEMPLATE.format(tail_pct=tail_pct), 0.03, "^"),
+        ("light_age", "hi", AGE_LABEL_LIGHT_OLD_TEMPLATE.format(tail_pct=tail_pct), 0.09, "D"),
     ]
 
     fig, axes = plt.subplots(
@@ -1746,7 +1785,7 @@ def plot_summary_age_split_cap_profiles(all_bin_results, out_dir):
         ax.axhline(0, color=CAP_ZERO_LINE_COLOR, lw=CAP_ZERO_LINE_WIDTH, ls=CAP_ZERO_LINE_STYLE)
         ax.set_title(_mass_bin_label(mass_lo, mass_hi), fontsize=CAP_PANEL_TITLE_SIZE, pad=CAP_PANEL_TITLE_PAD)
         ax.tick_params(labelsize=CAP_TICK_LABEL_SIZE)
-        ax.set_xlabel(r"$\theta_d\ {\rm [arcmin]}$", fontsize=CAP_AXIS_LABEL_SIZE_AGE)
+        ax.set_xlabel(CAP_X_LABEL, fontsize=CAP_AXIS_LABEL_SIZE_AGE)
         if c == 0:
             ax.set_ylabel(_cap_plot_axis_label(), fontsize=CAP_AXIS_LABEL_SIZE_AGE)
         else:
@@ -1762,7 +1801,7 @@ def plot_summary_age_split_cap_profiles(all_bin_results, out_dir):
         for ax in axes:
             _apply_scientific_y_ticks(ax)
 
-    fig.suptitle(r"{\rm Stellar\ Age\ CAP\ profiles}", fontsize=CAP_SUPTITLE_SIZE, y=CAP_SUPTITLE_Y)
+    fig.suptitle(CAP_AGE_SUPTITLE, fontsize=CAP_SUPTITLE_SIZE, y=CAP_SUPTITLE_Y)
     path = os.path.join(out_dir, "summary_stellar_age_cap_profiles_1x3.pdf")
     _savefig(path)
     plt.close(fig)
@@ -1814,53 +1853,14 @@ def plot_summary_radio_full_stacks(all_bin_results, out_dir, stack_norm):
     if last_im is not None:
         cax = fig.add_axes([grid_right + STACK_COLORBAR_PAD, STACK_RADIO_CBAR_BOTTOM, STACK_COLORBAR_WIDTH, STACK_RADIO_CBAR_HEIGHT])
         cb = fig.colorbar(last_im, cax=cax)
-        _format_colorbar(cb, r"$y\ {\rm [dimensionless]}$")
+        _format_colorbar(cb, STACK_COLORBAR_LABEL)
 
-    fig.suptitle(r"{\rm Radio\ Full\ Stack}", fontsize=STACK_SUPTITLE_SIZE, y=STACK_RADIO_SUPTITLE_Y)
+    fig.suptitle(STACK_RADIO_SUPTITLE, fontsize=STACK_SUPTITLE_SIZE, y=STACK_RADIO_SUPTITLE_Y)
 
     path = os.path.join(out_dir, "summary_radio_full_stack_1x3.pdf")
     _savefig(path)
     plt.close(fig)
     print(f"  [summary radio full stacks] {path}")
-
-
-def save_cap_covariances(all_bin_results, out_dir):
-    """Save CAP means, one-sigma errors, and full covariance matrices."""
-    payload = {}
-
-    for i_bin, bin_result in enumerate(all_bin_results):
-        mass_lo = bin_result.get("mass_lo", MASS_BINS[i_bin][0])
-        mass_hi = bin_result.get("mass_hi", MASS_BINS[i_bin][1])
-        tag = f"logm_{mass_lo:.1f}_{mass_hi:.1f}".replace(".", "p")
-
-        full = bin_result.get("full_stack", {})
-        if isinstance(full, dict):
-            for name in ["cap", "cap_major", "cap_minor"]:
-                mean_key = f"{name}_mean" if name != "cap" else "cap_mean"
-                std_key = f"{name}_std" if name != "cap" else "cap_std"
-                cov_key = f"{name}_cov" if name != "cap" else "cap_cov"
-                if cov_key in full:
-                    payload[f"{tag}_full_{name}_mean"] = full[mean_key]
-                    payload[f"{tag}_full_{name}_std"] = full[std_key]
-                    payload[f"{tag}_full_{name}_cov"] = full[cov_key]
-
-        for scheme_key in ACTIVE_SPLIT_SCHEMES:
-            for split_key in ["lo", "hi"]:
-                res = bin_result.get(scheme_key, {}).get(split_key, {})
-                if isinstance(res, dict) and "cap_cov" in res:
-                    prefix = f"{tag}_{scheme_key}_{split_key}"
-                    payload[f"{prefix}_mean"] = res["cap_mean"]
-                    payload[f"{prefix}_std"] = res["cap_std"]
-                    payload[f"{prefix}_cov"] = res["cap_cov"]
-
-    payload["cap_radii_arcmin"] = CAP_RADII_ARCMIN
-    payload["cap_internal_unit"] = np.array("y arcmin^2")
-    payload["cap_plot_unit"] = np.array("yarcmin2")
-    payload["cap_plot_scale_from_internal"] = np.array(1.0)
-    path = os.path.join(out_dir, "cap_profile_covariances.npz")
-    np.savez(path, **payload)
-    print(f"  [CAP covariance] {path}")
-
 
 
 def _cap_sig(value, error):
@@ -1937,22 +1937,70 @@ def _cap_diff_sig_array(values_a, errors_a, values_b, errors_b):
     return out
 
 
+def _print_plain_significance_table(title, left_name, right_name, rows):
+    """
+    Print a plain fixed-width significance table.
+
+    rows should contain:
+        [mass_label, radius_label, left_sigma0, right_sigma0, difference_sigma]
+    """
+
+    col_w = [16, 18, 14, 14, 14]
+
+    print("\n" + title)
+    print(
+        f"{'Mass bin':<{col_w[0]}}"
+        f"{'Aperture radius':>{col_w[1]}}"
+        f"{left_name:>{col_w[2]}}"
+        f"{right_name:>{col_w[3]}}"
+        f"{'Difference':>{col_w[4]}}"
+    )
+    print(
+        f"{'':<{col_w[0]}}"
+        f"{'[arcmin]':>{col_w[1]}}"
+        f"{'S^(0)':>{col_w[2]}}"
+        f"{'S^(0)':>{col_w[3]}}"
+        f"{'S^(Delta)':>{col_w[4]}}"
+    )
+
+    rule = "-" * sum(col_w)
+    print(rule)
+
+    last_mass = None
+    for mass_label, radius_label, left_sig, right_sig, diff_sig in rows:
+        if last_mass is not None and mass_label != last_mass:
+            print(rule)
+
+        print(
+            f"{mass_label:<{col_w[0]}}"
+            f"{radius_label:>{col_w[1]}}"
+            f"{left_sig:>{col_w[2]}}"
+            f"{right_sig:>{col_w[3]}}"
+            f"{diff_sig:>{col_w[4]}}"
+        )
+        last_mass = mass_label
+
+    print(rule)
+
+
+def _radius_label(theta):
+    theta = float(theta)
+    if abs(theta - round(theta)) < 1e-8:
+        return f"{int(round(theta))}"
+    return f"{theta:.2f}"
+
+
 def print_cap_significance_tables(all_bin_results):
-    sector_columns = [
-        "mass_bin",
-        "theta_arcmin",
-        "major_sigma0",
-        "minor_sigma0",
-        "difference_sigma",
-    ]
+    # ========================================================
+    # 1. Major versus minor table
+    # ========================================================
     sector_rows = []
-    total_zero_rows = []
-    total_difference_rows = []
 
     for i_bin, bin_result in enumerate(all_bin_results):
         mass_lo = bin_result.get("mass_lo", MASS_BINS[i_bin][0])
         mass_hi = bin_result.get("mass_hi", MASS_BINS[i_bin][1])
         mass_label = f"({mass_lo:.1f}, {mass_hi:.1f}]"
+
         full = bin_result.get("full_stack", {})
         if not isinstance(full, dict):
             continue
@@ -1961,6 +2009,7 @@ def print_cap_significance_tables(all_bin_results):
         maj_s = _cap_to_plot_units(full.get("cap_major_std"))
         min_m = _cap_to_plot_units(full.get("cap_minor_mean"))
         min_s = _cap_to_plot_units(full.get("cap_minor_std"))
+
         if maj_m is None or maj_s is None or min_m is None or min_s is None:
             continue
 
@@ -1968,113 +2017,105 @@ def print_cap_significance_tables(all_bin_results):
         min_sig = _cap_sig_array(min_m, min_s)
         diff_sig = _cap_diff_sig_array(maj_m, maj_s, min_m, min_s)
 
-        for theta, a_sig, b_sig, d_sig in zip(CAP_RADII_ARCMIN, maj_sig, min_sig, diff_sig):
+        for theta, a_sig, b_sig, d_sig in zip(
+            CAP_RADII_ARCMIN,
+            maj_sig,
+            min_sig,
+            diff_sig,
+        ):
             sector_rows.append([
                 mass_label,
-                f"{float(theta):.2f}",
+                _radius_label(theta),
                 _cap_fmt_sigma(a_sig),
                 _cap_fmt_sigma(b_sig),
                 _cap_fmt_sigma(abs(d_sig)),
             ])
 
-        total_zero_rows.append([
+        sector_rows.append([
             mass_label,
-            "major",
+            "Aggregate",
             _cap_fmt_sigma(_cap_total_sigma(maj_sig)),
-        ])
-        total_zero_rows.append([
-            mass_label,
-            "minor",
             _cap_fmt_sigma(_cap_total_sigma(min_sig)),
-        ])
-        total_difference_rows.append([
-            mass_label,
-            "major_vs_minor",
             _cap_fmt_sigma(_cap_total_sigma(diff_sig)),
         ])
 
-    _print_cap_table("CAP significance table: major versus minor sector", sector_columns, sector_rows)
+    _print_plain_significance_table(
+        "CAP significance table: major versus minor sector",
+        "Major axis",
+        "Minor axis",
+        sector_rows,
+    )
 
-    age_columns = [
-        "mass_bin",
-        "theta_arcmin",
-        "low_sigma0",
-        "high_sigma0",
-        "difference_sigma",
+    # ========================================================
+    # 2. Young versus old mass-weighted age table
+    # 3. Young versus old light-weighted age table
+    # ========================================================
+    age_table_defs = [
+        (
+            "mass_age",
+            "CAP significance table: young versus old mass-weighted stellar age",
+        ),
+        (
+            "light_age",
+            "CAP significance table: young versus old light-weighted stellar age",
+        ),
     ]
 
-    for scheme_key, title in [
-        ("mass_age", "CAP significance table: lowest versus highest mass weighted stellar age"),
-        ("light_age", "CAP significance table: lowest versus highest light weighted stellar age"),
-    ]:
+    for scheme_key, title in age_table_defs:
         age_rows = []
+
         for i_bin, bin_result in enumerate(all_bin_results):
             mass_lo = bin_result.get("mass_lo", MASS_BINS[i_bin][0])
             mass_hi = bin_result.get("mass_hi", MASS_BINS[i_bin][1])
             mass_label = f"({mass_lo:.1f}, {mass_hi:.1f}]"
-            low = bin_result.get(scheme_key, {}).get("lo", {})
-            high = bin_result.get(scheme_key, {}).get("hi", {})
-            if not isinstance(low, dict) or not isinstance(high, dict):
+
+            young = bin_result.get(scheme_key, {}).get("lo", {})
+            old = bin_result.get(scheme_key, {}).get("hi", {})
+
+            if not isinstance(young, dict) or not isinstance(old, dict):
                 continue
 
-            low_m = _cap_to_plot_units(low.get("cap_mean"))
-            low_s = _cap_to_plot_units(low.get("cap_std"))
-            high_m = _cap_to_plot_units(high.get("cap_mean"))
-            high_s = _cap_to_plot_units(high.get("cap_std"))
-            if low_m is None or low_s is None or high_m is None or high_s is None:
+            young_m = _cap_to_plot_units(young.get("cap_mean"))
+            young_s = _cap_to_plot_units(young.get("cap_std"))
+            old_m = _cap_to_plot_units(old.get("cap_mean"))
+            old_s = _cap_to_plot_units(old.get("cap_std"))
+
+            if young_m is None or young_s is None or old_m is None or old_s is None:
                 continue
 
-            low_sig = _cap_sig_array(low_m, low_s)
-            high_sig = _cap_sig_array(high_m, high_s)
-            diff_sig = _cap_diff_sig_array(low_m, low_s, high_m, high_s)
+            young_sig = _cap_sig_array(young_m, young_s)
+            old_sig = _cap_sig_array(old_m, old_s)
+            diff_sig = _cap_diff_sig_array(young_m, young_s, old_m, old_s)
 
-            for theta, a_sig, b_sig, d_sig in zip(CAP_RADII_ARCMIN, low_sig, high_sig, diff_sig):
+            for theta, y_sig, o_sig, d_sig in zip(
+                CAP_RADII_ARCMIN,
+                young_sig,
+                old_sig,
+                diff_sig,
+            ):
                 age_rows.append([
                     mass_label,
-                    f"{float(theta):.2f}",
-                    _cap_fmt_sigma(a_sig),
-                    _cap_fmt_sigma(b_sig),
+                    _radius_label(theta),
+                    _cap_fmt_sigma(y_sig),
+                    _cap_fmt_sigma(o_sig),
                     _cap_fmt_sigma(abs(d_sig)),
                 ])
 
-            if scheme_key == "mass_age":
-                low_label = "lowest_mass_weighted_age"
-                high_label = "highest_mass_weighted_age"
-                diff_label = "lowest_vs_highest_mass_weighted_age"
-            else:
-                low_label = "lowest_light_weighted_age"
-                high_label = "highest_light_weighted_age"
-                diff_label = "lowest_vs_highest_light_weighted_age"
-
-            total_zero_rows.append([
+            age_rows.append([
                 mass_label,
-                low_label,
-                _cap_fmt_sigma(_cap_total_sigma(low_sig)),
-            ])
-            total_zero_rows.append([
-                mass_label,
-                high_label,
-                _cap_fmt_sigma(_cap_total_sigma(high_sig)),
-            ])
-            total_difference_rows.append([
-                mass_label,
-                diff_label,
+                "Aggregate",
+                _cap_fmt_sigma(_cap_total_sigma(young_sig)),
+                _cap_fmt_sigma(_cap_total_sigma(old_sig)),
                 _cap_fmt_sigma(_cap_total_sigma(diff_sig)),
             ])
 
-        _print_cap_table(title, age_columns, age_rows)
-
-    _print_cap_table(
-        "CAP total significance from zero",
-        ["mass_bin", "profile", "total_sigma0"],
-        total_zero_rows,
-    )
-    _print_cap_table(
-        "CAP total significance of differences",
-        ["mass_bin", "comparison", "total_difference_sigma"],
-        total_difference_rows,
-    )
-
+        _print_plain_significance_table(
+            title,
+            "Young",
+            "Old",
+            age_rows,
+        )
+        
 # ============================================================
 # MAIN PIPELINE
 # ============================================================
@@ -2303,10 +2344,6 @@ def build_selection_and_cache():
     if n_new > 0:
         print(f"  [cache] Adding {n_new:,} new galaxies")
         new_local = cache_indices[new_mask]
-        print("THIS IS ME TESTING CACHE Before they are stored")
-        print("fits_idx before:", fits_idx_ff[new_local][:10])
-        print("ra before:", ra_ff[new_local][:10])
-
 
         _append_to_cache(
             h5f,
@@ -2330,9 +2367,6 @@ def build_selection_and_cache():
             EBV=EBV_ff[new_local],
             has_radio=has_radio_ff[new_local],
         )
-        print("THIS IS ME TESTING CACHE AFTER they are stored")
-        print("fits_idx cache:", h5f["fits_idx"][-n_new:][:10])
-        print("ra cache:", h5f["ra"][-n_new:][:10])
     else:
         print(f"  [cache] All {len(cache_fits_idx):,} cache galaxies are already in cache")
 
@@ -2605,36 +2639,22 @@ def add_age_split_results(h5f, bin_result, mass_mask, cache_fields):
 def _hist_bin_edges(var_name, mass_lo=None, mass_hi=None):
     if var_name == "logm":
         return np.linspace(mass_lo, mass_hi, MASS_WEIGHT_N_BINS + 1)
-    if var_name == "z":
-        return np.linspace(Z_MIN, Z_MAX, HIST_N_BINS + 1)
     if var_name == "EBV":
         ebv_hi = EBV_MAX if USE_EBV_CUT else EBV_HIST_MAX_NO_CUT
         return np.linspace(0.0, ebv_hi, HIST_N_BINS + 1)
-    if var_name == "age_log":
-        return np.linspace(HIST_AGE_LOG_MIN, HIST_AGE_LOG_MAX, HIST_N_BINS + 1)
     raise ValueError(f"Unknown histogram variable: {var_name}")
 
 def _hist_xlabel(var_name):
-    if var_name == "logm":
-        return r"$\log_{10}\!\left(M_\ast/M_\odot\right)$"
-    if var_name == "z":
-        return r"$\mathrm{Redshift}\ (z)$"
-    if var_name == "EBV":
-        return r"$E(B-V)$"
-    if var_name == "age_log":
-        return r"$\log_{10}\!\left(t_{\rm age}/{\rm yr}\right)$"
-    raise ValueError(f"Unknown histogram variable: {var_name}")
+    try:
+        return HIST_XLABELS[var_name]
+    except KeyError:
+        raise ValueError(f"Unknown histogram variable: {var_name}")
 
 def _hist_title(var_name):
-    if var_name == "logm":
-        return r"{\rm Stellar\ Mass\ Distribution}"
-    if var_name == "z":
-        return r"{\rm Redshift\ Distribution}"
-    if var_name == "EBV":
-        return r"{\rm Dust\ Reddening\ Distribution}"
-    if var_name == "age_log":
-        return r"{\rm Stellar\ Age\ Distribution}"
-    raise ValueError(f"Unknown histogram variable: {var_name}")
+    try:
+        return HIST_SUPTITLES[var_name]
+    except KeyError:
+        raise ValueError(f"Unknown histogram variable: {var_name}")
 
 def _latex_sci_value(value, precision=HIST_MEDIAN_SCI_PRECISION):
     """Return a compact LaTeX scientific notation string without dollar signs."""
@@ -2652,34 +2672,24 @@ def _latex_sci_value(value, precision=HIST_MEDIAN_SCI_PRECISION):
         return mantissa_str
     return rf"{mantissa_str}\times 10^{{{exponent}}}"
 
-def _hist_legend_label_with_median(label, var_name, median_value, median_raw=None):
+def _hist_legend_label_with_median(label, var_name, median_value):
     """Append median value to the stellar-age split histogram legend label."""
-    if not HIST_SHOW_MEDIAN_IN_LEGEND:
+    if not HIST_SHOW_MEDIAN_IN_LEGEND or not np.isfinite(median_value):
         return label
 
-    if var_name == "age_log" and HIST_AGE_LOG_LEGEND_MEDIAN_IN_YEARS and median_raw is not None:
-        display_value = median_raw
-        unit = r"\ {\rm yr}"
-    else:
-        display_value = median_value
-        unit = ""
-
-    if not np.isfinite(display_value):
-        return label
-
-    median_str = _latex_sci_value(display_value)
-    return rf"${label},\ {HIST_MEDIAN_TEXT}={median_str}{unit}$"
+    median_str = _latex_sci_value(median_value)
+    return rf"${label},\ {HIST_MEDIAN_TEXT}={median_str}$"
 
 def plot_summary_age_split_histograms(all_bin_results, h5f, out_dir, var_name):
     """
-    Plot 1x3 histogram summary for one variable:
-    logm, z, EBV, or age_log.
+    Plot one requested 1x3 histogram summary.
 
-    Each panel is one stellar mass bin.
-    Each panel overlays the four age-selected subsamples.
-    The legend gives each subsample median in scientific notation.
-    The histogram height is relative frequency per bin:
-        N_bin / N_total_subsample.
+    Supported var_name values are:
+      - "logm" for summary_stellar_age_hist_mass_1x3.pdf
+      - "EBV"  for summary_stellar_age_hist_ebv_1x3.pdf
+
+    Each panel is one stellar mass bin and overlays the four stellar-age
+    tail subsamples. Histogram heights are relative frequencies per bin.
     """
     if len(all_bin_results) == 0:
         return
@@ -2687,12 +2697,12 @@ def plot_summary_age_split_histograms(all_bin_results, h5f, out_dir, var_name):
     tail_pct = _split_tail_pct_label()
 
     curve_defs = [
-        ("mass_age", "lo", rf"{{\rm Lowest\ {tail_pct}\%\ mass\ weighted\ age}}"),
-        ("mass_age", "hi", rf"{{\rm Highest\ {tail_pct}\%\ mass\ weighted\ age}}"),
-        ("light_age", "lo", rf"{{\rm Lowest\ {tail_pct}\%\ light\ weighted\ age}}"),
-        ("light_age", "hi", rf"{{\rm Highest\ {tail_pct}\%\ light\ weighted\ age}}"),
+        ("mass_age", "lo", AGE_LABEL_MASS_YOUNG_TEMPLATE.format(tail_pct=tail_pct)),
+        ("mass_age", "hi", AGE_LABEL_MASS_OLD_TEMPLATE.format(tail_pct=tail_pct)),
+        ("light_age", "lo", AGE_LABEL_LIGHT_YOUNG_TEMPLATE.format(tail_pct=tail_pct)),
+        ("light_age", "hi", AGE_LABEL_LIGHT_OLD_TEMPLATE.format(tail_pct=tail_pct)),
     ]
-    
+
     fig, axes = plt.subplots(
         1,
         len(MASS_BINS),
@@ -2703,18 +2713,14 @@ def plot_summary_age_split_histograms(all_bin_results, h5f, out_dir, var_name):
     axes = axes.ravel()
     fig.subplots_adjust(left=HIST_LEFT, right=HIST_RIGHT, bottom=HIST_BOTTOM, top=HIST_TOP, wspace=HIST_WSPACE)
 
-    # Pull cached catalog arrays once.
-    logm_all = h5f["logm"][:]
-    z_all = h5f["z"][:]
-    ebv_all = h5f["EBV"][:]
-    age_massW_all = h5f["age_massW"][:]
-    age_lightW_all = h5f["age_lightW"][:]
-
     var_map = {
-        "logm": logm_all,
-        "z": z_all,
-        "EBV": ebv_all,
+        "logm": h5f["logm"][:],
+        "EBV": h5f["EBV"][:],
     }
+    if var_name not in var_map:
+        raise ValueError(f"Unsupported histogram variable for requested outputs: {var_name}")
+
+    values_all = var_map[var_name]
 
     for c, bin_result in enumerate(all_bin_results):
         ax = axes[c]
@@ -2732,37 +2738,13 @@ def plot_summary_age_split_histograms(all_bin_results, h5f, out_dir, var_name):
             if mask is None:
                 continue
 
-            median_raw = None
-            if var_name == "age_log":
-                if scheme_key == "mass_age":
-                    x_raw = age_massW_all[mask]
-                elif scheme_key == "light_age":
-                    x_raw = age_lightW_all[mask]
-                else:
-                    raise ValueError(f"Unknown age split scheme: {scheme_key}")
-
-                x_raw = x_raw[np.isfinite(x_raw) & (x_raw > 0.0)]
-                if len(x_raw) == 0:
-                    continue
-
-                median_raw = float(np.nanmedian(x_raw))
-                x = np.log10(x_raw)
-
-            else:
-                values_all = var_map[var_name]
-                x = values_all[mask]
-                x = x[np.isfinite(x)]
-                if len(x) == 0:
-                    continue
+            x = values_all[mask]
+            x = x[np.isfinite(x)]
+            if len(x) == 0:
+                continue
 
             median_value = float(np.nanmedian(x))
-            label_with_median = _hist_legend_label_with_median(
-                label,
-                var_name,
-                median_value,
-                median_raw=median_raw,
-            )
-
+            label_with_median = _hist_legend_label_with_median(label, var_name, median_value)
             weights = np.ones_like(x, dtype=np.float64) / len(x)
 
             ax.hist(
@@ -2778,7 +2760,7 @@ def plot_summary_age_split_histograms(all_bin_results, h5f, out_dir, var_name):
         ax.tick_params(labelsize=HIST_TICK_LABEL_SIZE)
         ax.set_xlabel(_hist_xlabel(var_name), fontsize=HIST_AXIS_LABEL_SIZE)
         if c == 0:
-            ax.set_ylabel(r"$\mathrm{Fraction\ per\ bin}$", fontsize=HIST_AXIS_LABEL_SIZE)
+            ax.set_ylabel(HIST_FRACTION_Y_LABEL, fontsize=HIST_AXIS_LABEL_SIZE)
         else:
             ax.tick_params(labelleft=False)
 
@@ -2790,16 +2772,13 @@ def plot_summary_age_split_histograms(all_bin_results, h5f, out_dir, var_name):
 
     filename_map = {
         "logm": "summary_stellar_age_hist_mass_1x3.pdf",
-        "z": "summary_stellar_age_hist_redshift_1x3.pdf",
         "EBV": "summary_stellar_age_hist_ebv_1x3.pdf",
-        "age_log": "summary_stellar_age_hist_age_log_1x3.pdf",
     }
 
     path = os.path.join(out_dir, filename_map[var_name])
     _savefig(path)
     plt.close(fig)
     print(f"  [summary histogram: {var_name}] {path}")
-
 
 def plot_summary_age_split_weighted_mass_histograms(all_bin_results, h5f, out_dir):
     """Plot mass histograms after applying split-stack mass weights."""
@@ -2808,10 +2787,10 @@ def plot_summary_age_split_weighted_mass_histograms(all_bin_results, h5f, out_di
 
     tail_pct = _split_tail_pct_label()
     curve_defs = [
-        ("mass_age", "lo", rf"{{\rm Lowest\ {tail_pct}\%\ mass\ weighted\ age}}"),
-        ("mass_age", "hi", rf"{{\rm Highest\ {tail_pct}\%\ mass\ weighted\ age}}"),
-        ("light_age", "lo", rf"{{\rm Lowest\ {tail_pct}\%\ light\ weighted\ age}}"),
-        ("light_age", "hi", rf"{{\rm Highest\ {tail_pct}\%\ light\ weighted\ age}}"),
+        ("mass_age", "lo", AGE_LABEL_MASS_YOUNG_TEMPLATE.format(tail_pct=tail_pct)),
+        ("mass_age", "hi", AGE_LABEL_MASS_OLD_TEMPLATE.format(tail_pct=tail_pct)),
+        ("light_age", "lo", AGE_LABEL_LIGHT_YOUNG_TEMPLATE.format(tail_pct=tail_pct)),
+        ("light_age", "hi", AGE_LABEL_LIGHT_OLD_TEMPLATE.format(tail_pct=tail_pct)),
     ]
 
     fig, axes = plt.subplots(
@@ -2864,14 +2843,14 @@ def plot_summary_age_split_weighted_mass_histograms(all_bin_results, h5f, out_di
         ax.tick_params(labelsize=HIST_TICK_LABEL_SIZE)
         ax.set_xlabel(_hist_xlabel("logm"), fontsize=HIST_AXIS_LABEL_SIZE)
         if c == 0:
-            ax.set_ylabel(r"$\mathrm{Weighted\ fraction\ per\ bin}$", fontsize=HIST_AXIS_LABEL_SIZE)
+            ax.set_ylabel(HIST_WEIGHTED_FRACTION_Y_LABEL, fontsize=HIST_AXIS_LABEL_SIZE)
         else:
             ax.tick_params(labelleft=False)
         ax.set_ylim(*HIST_YLIMS["logm"])
         _prune_touching_x_ticks(ax)
         ax.legend(loc=HIST_LEGEND_LOC, fontsize=HIST_LEGEND_SIZE)
 
-    fig.suptitle(r"{\rm Stellar\ Mass\ Distribution\ After\ Mass\ Weighting}", fontsize=HIST_SUPTITLE_SIZE, y=HIST_SUPTITLE_Y)
+    fig.suptitle(HIST_WEIGHTED_MASS_SUPTITLE, fontsize=HIST_SUPTITLE_SIZE, y=HIST_SUPTITLE_Y)
     path = os.path.join(out_dir, "summary_stellar_age_hist_mass_weighted_1x3.pdf")
     _savefig(path)
     plt.close(fig)
@@ -2885,10 +2864,10 @@ def plot_summary_age_split_mass_weight_values(all_bin_results, h5f, out_dir):
 
     tail_pct = _split_tail_pct_label()
     curve_defs = [
-        ("mass_age", "lo", rf"{{\rm Lowest\ {tail_pct}\%\ mass\ weighted\ age}}"),
-        ("mass_age", "hi", rf"{{\rm Highest\ {tail_pct}\%\ mass\ weighted\ age}}"),
-        ("light_age", "lo", rf"{{\rm Lowest\ {tail_pct}\%\ light\ weighted\ age}}"),
-        ("light_age", "hi", rf"{{\rm Highest\ {tail_pct}\%\ light\ weighted\ age}}"),
+        ("mass_age", "lo", AGE_LABEL_MASS_YOUNG_TEMPLATE.format(tail_pct=tail_pct)),
+        ("mass_age", "hi", AGE_LABEL_MASS_OLD_TEMPLATE.format(tail_pct=tail_pct)),
+        ("light_age", "lo", AGE_LABEL_LIGHT_YOUNG_TEMPLATE.format(tail_pct=tail_pct)),
+        ("light_age", "hi", AGE_LABEL_LIGHT_OLD_TEMPLATE.format(tail_pct=tail_pct)),
     ]
 
     fig, axes = plt.subplots(
@@ -2942,7 +2921,7 @@ def plot_summary_age_split_mass_weight_values(all_bin_results, h5f, out_dir):
         ax.tick_params(labelsize=HIST_TICK_LABEL_SIZE)
         ax.set_xlabel(_hist_xlabel("logm"), fontsize=HIST_AXIS_LABEL_SIZE)
         if c == 0:
-            ax.set_ylabel(r"$\mathrm{Mean\ mass\ weight}$", fontsize=HIST_AXIS_LABEL_SIZE)
+            ax.set_ylabel(HIST_MEAN_MASS_WEIGHT_Y_LABEL, fontsize=HIST_AXIS_LABEL_SIZE)
         else:
             ax.tick_params(labelleft=False)
         _prune_touching_x_ticks(ax)
@@ -2956,204 +2935,13 @@ def plot_summary_age_split_mass_weight_values(all_bin_results, h5f, out_dir):
         for ax in axes:
             ax.set_ylim(0.0, ymax)
 
-    fig.suptitle(r"{\rm Applied\ Split\ Stack\ Mass\ Weights}", fontsize=HIST_SUPTITLE_SIZE, y=HIST_SUPTITLE_Y)
+    fig.suptitle(HIST_MASS_WEIGHTS_SUPTITLE, fontsize=HIST_SUPTITLE_SIZE, y=HIST_SUPTITLE_Y)
     path = os.path.join(out_dir, "summary_stellar_age_mass_weights_1x3.pdf")
     _savefig(path)
     plt.close(fig)
     print(f"  [summary mass weights] {path}")
 
 
-def _fraction_step_hist(ax, x, bins, label=None, linewidth=HIST_LINEWIDTH):
-    """Plot a relative-frequency step histogram."""
-    x = np.asarray(x, dtype=np.float64)
-    x = x[np.isfinite(x)]
-    if len(x) == 0:
-        return False
-
-    weights = np.ones_like(x, dtype=np.float64) / len(x)
-    ax.hist(
-        x,
-        bins=bins,
-        weights=weights,
-        histtype="step",
-        linewidth=linewidth,
-        label=label,
-    )
-    return True
-
-
-def _folded_pa_difference_deg(pa1_deg, pa2_deg):
-    """Axial PA difference in degrees, folded into [0, 90]."""
-    return np.abs(((pa1_deg - pa2_deg + 90.0) % 180.0) - 90.0)
-
-
-def plot_summary_oriented_selected_ba_histograms(all_bin_results, h5f, out_dir):
-    """Plot selected oriented-sample b/a distributions by mass bin."""
-    if len(all_bin_results) == 0:
-        return
-
-    fig, axes = plt.subplots(
-        1,
-        len(MASS_BINS),
-        figsize=(HIST_FIG_WIDTH_PER_COL * len(MASS_BINS), HIST_FIG_HEIGHT),
-        squeeze=False,
-        sharey=True,
-    )
-    axes = axes.ravel()
-    fig.subplots_adjust(left=HIST_LEFT, right=HIST_RIGHT, bottom=HIST_BOTTOM, top=HIST_TOP, wspace=HIST_WSPACE)
-
-    ab_all = h5f["ab"][:]
-    bins = np.linspace(BA_HIST_MIN, BA_HIST_MAX, HIST_N_BINS + 1)
-
-    for c, bin_result in enumerate(all_bin_results):
-        ax = axes[c]
-        mass_lo = bin_result.get("mass_lo", MASS_BINS[c][0])
-        mass_hi = bin_result.get("mass_hi", MASS_BINS[c][1])
-        res = bin_result.get("full_stack", {})
-        mask = res.get("effective_mask") if isinstance(res, dict) else None
-
-        if mask is not None:
-            x = ab_all[mask]
-            x = x[np.isfinite(x) & (x > 0.0) & (x < BA_MAX)]
-            _fraction_step_hist(ax, x, bins)
-
-        ax.set_title(_mass_bin_label(mass_lo, mass_hi), fontsize=HIST_PANEL_TITLE_SIZE, pad=HIST_PANEL_TITLE_PAD)
-        ax.tick_params(labelsize=HIST_TICK_LABEL_SIZE)
-        ax.set_xlabel(r"$b/a$", fontsize=HIST_AXIS_LABEL_SIZE)
-        if c == 0:
-            ax.set_ylabel(r"$\mathrm{Fraction\ per\ bin}$", fontsize=HIST_AXIS_LABEL_SIZE)
-        else:
-            ax.tick_params(labelleft=False)
-
-        ax.set_xlim(BA_HIST_MIN, BA_HIST_MAX)
-        ax.set_ylim(*HIST_YLIMS["ba_selected"])
-        _prune_touching_x_ticks(ax)
-
-    fig.suptitle(r"{\rm Nonradio\ Oriented\ Sample\ Axis\ Ratio}", fontsize=HIST_SUPTITLE_SIZE, y=HIST_SUPTITLE_Y)
-
-    path = os.path.join(out_dir, "summary_oriented_hist_ba_selected_1x3.pdf")
-    _savefig(path)
-    plt.close(fig)
-    print(f"  [summary histogram: selected b/a] {path}")
-
-
-def plot_summary_photo_model_delta_ba_histograms(all_bin_results, h5f, out_dir):
-    """Plot de Vaucouleurs minus exponential b/a by mass bin."""
-    if len(all_bin_results) == 0:
-        return
-
-    fig, axes = plt.subplots(
-        1,
-        len(MASS_BINS),
-        figsize=(HIST_FIG_WIDTH_PER_COL * len(MASS_BINS), HIST_FIG_HEIGHT),
-        squeeze=False,
-        sharey=True,
-    )
-    axes = axes.ravel()
-    fig.subplots_adjust(left=HIST_LEFT, right=HIST_RIGHT, bottom=HIST_BOTTOM, top=HIST_TOP, wspace=HIST_WSPACE)
-
-    ab_dev_all = h5f["ab_dev"][:]
-    ab_exp_all = h5f["ab_exp"][:]
-    bins = np.linspace(DELTA_BA_HIST_MIN, DELTA_BA_HIST_MAX, HIST_N_BINS + 1)
-
-    for c, bin_result in enumerate(all_bin_results):
-        ax = axes[c]
-        mass_lo = bin_result.get("mass_lo", MASS_BINS[c][0])
-        mass_hi = bin_result.get("mass_hi", MASS_BINS[c][1])
-        res = bin_result.get("full_stack", {})
-        mask = res.get("effective_mask") if isinstance(res, dict) else None
-
-        if mask is not None:
-            ab_dev = ab_dev_all[mask]
-            ab_exp = ab_exp_all[mask]
-            good = (
-                np.isfinite(ab_dev)
-                & np.isfinite(ab_exp)
-                & (ab_dev > 0.0)
-                & (ab_dev <= 1.0)
-                & (ab_exp > 0.0)
-                & (ab_exp <= 1.0)
-            )
-            x = ab_dev[good] - ab_exp[good]
-            _fraction_step_hist(ax, x, bins)
-
-        ax.axvline(0.0, color=HIST_ZERO_LINE_COLOR, lw=HIST_ZERO_LINE_WIDTH, ls=HIST_ZERO_LINE_STYLE)
-        ax.set_title(_mass_bin_label(mass_lo, mass_hi), fontsize=HIST_PANEL_TITLE_SIZE, pad=HIST_PANEL_TITLE_PAD)
-        ax.tick_params(labelsize=HIST_TICK_LABEL_SIZE)
-        ax.set_xlabel(r"$(b/a)_{\rm deV}-(b/a)_{\rm exp}$", fontsize=HIST_AXIS_LABEL_SIZE)
-        if c == 0:
-            ax.set_ylabel(r"$\mathrm{Fraction\ per\ bin}$", fontsize=HIST_AXIS_LABEL_SIZE)
-        else:
-            ax.tick_params(labelleft=False)
-
-        ax.set_xlim(DELTA_BA_HIST_MIN, DELTA_BA_HIST_MAX)
-        ax.set_ylim(*HIST_YLIMS["delta_ba"])
-        _prune_touching_x_ticks(ax)
-
-    fig.suptitle(r"{\rm Nonradio\ deVaucouleurs\ minus\ Exponential\ Axis\ Ratio}", fontsize=HIST_SUPTITLE_SIZE, y=HIST_SUPTITLE_Y)
-
-    path = os.path.join(out_dir, "summary_photo_model_hist_delta_ba_dev_minus_exp_1x3.pdf")
-    _savefig(path)
-    plt.close(fig)
-    print(f"  [summary histogram: delta b/a] {path}")
-
-
-def plot_summary_photo_model_folded_pa_difference_histograms(all_bin_results, h5f, out_dir):
-    """Plot folded de Vaucouleurs versus exponential PA differences by mass bin."""
-    if len(all_bin_results) == 0:
-        return
-
-    fig, axes = plt.subplots(
-        1,
-        len(MASS_BINS),
-        figsize=(HIST_FIG_WIDTH_PER_COL * len(MASS_BINS), HIST_FIG_HEIGHT),
-        squeeze=False,
-        sharey=True,
-    )
-    axes = axes.ravel()
-    fig.subplots_adjust(left=HIST_LEFT, right=HIST_RIGHT, bottom=HIST_BOTTOM, top=HIST_TOP, wspace=HIST_WSPACE)
-
-    pa_dev_all = h5f["pa_dev"][:]
-    pa_exp_all = h5f["pa_exp"][:]
-    bins = np.linspace(PA_DIFF_HIST_MIN, PA_DIFF_HIST_MAX, HIST_N_BINS + 1)
-
-    for c, bin_result in enumerate(all_bin_results):
-        ax = axes[c]
-        mass_lo = bin_result.get("mass_lo", MASS_BINS[c][0])
-        mass_hi = bin_result.get("mass_hi", MASS_BINS[c][1])
-        res = bin_result.get("full_stack", {})
-        mask = res.get("effective_mask") if isinstance(res, dict) else None
-
-        if mask is not None:
-            pa_dev = pa_dev_all[mask]
-            pa_exp = pa_exp_all[mask]
-            good = (
-                np.isfinite(pa_dev)
-                & np.isfinite(pa_exp)
-                & (pa_dev > -900.0)
-                & (pa_exp > -900.0)
-            )
-            x = _folded_pa_difference_deg(pa_dev[good], pa_exp[good])
-            _fraction_step_hist(ax, x, bins)
-
-        ax.set_title(_mass_bin_label(mass_lo, mass_hi), fontsize=HIST_PANEL_TITLE_SIZE, pad=HIST_PANEL_TITLE_PAD)
-        ax.tick_params(labelsize=HIST_TICK_LABEL_SIZE)
-        ax.set_xlabel(r"$|\Delta{\rm PA}|_{\rm folded}\ [{\rm deg}]$", fontsize=HIST_AXIS_LABEL_SIZE)
-        if c == 0:
-            ax.set_ylabel(r"$\mathrm{Fraction\ per\ bin}$", fontsize=HIST_AXIS_LABEL_SIZE)
-        else:
-            ax.tick_params(labelleft=False)
-
-        ax.set_xlim(PA_DIFF_HIST_MIN, PA_DIFF_HIST_MAX)
-        ax.set_ylim(*HIST_YLIMS["pa_folded_diff"])
-        _prune_touching_x_ticks(ax)
-
-    fig.suptitle(r"{\rm Nonradio\ Folded\ deVaucouleurs\ versus\ Exponential\ PA\ Difference}", fontsize=HIST_SUPTITLE_SIZE, y=HIST_SUPTITLE_Y)
-
-    path = os.path.join(out_dir, "summary_photo_model_hist_folded_pa_difference_1x3.pdf")
-    _savefig(path)
-    plt.close(fig)
-    print(f"  [summary histogram: folded PA difference] {path}")
 
 def main():
     os.makedirs(SUMMARY_DIR, exist_ok=True)
@@ -3258,7 +3046,6 @@ def main():
     plot_summary_age_split_weighted_mass_histograms(all_bin_results, h5f, SUMMARY_DIR)
     plot_summary_age_split_mass_weight_values(all_bin_results, h5f, SUMMARY_DIR)
     plot_summary_age_split_histograms(all_bin_results, h5f, SUMMARY_DIR, "EBV")
-    save_cap_covariances(all_bin_results, SUMMARY_DIR)
     print_cap_significance_tables(all_bin_results)
 
     print("\nDone. The only PDFs written by this script are:")
