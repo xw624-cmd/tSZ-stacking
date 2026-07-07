@@ -184,15 +184,15 @@ SAVEFIG_BBOX_INCHES = "tight"
 SAVEFIG_PAD_INCHES = 0.0
 
 # Shared stack-image aesthetics.
-STACK_PANEL_TITLE_SIZE = 14
-STACK_PANEL_TITLE_PAD = 16
-STACK_SUPTITLE_SIZE = 18
+STACK_PANEL_TITLE_SIZE = 12
+STACK_PANEL_TITLE_PAD = 18
+STACK_SUPTITLE_SIZE = 16
 STACK_AXIS_LABEL_SIZE = 15
 STACK_TICK_LABEL_SIZE = 12
 STACK_N_LABEL_SIZE = 10
 STACK_NO_DATA_SIZE = 9
 STACK_ROW_LABEL_SIZE = 16
-STACK_XY_TICK_NBINS = 7
+STACK_XY_TICKS = np.array([-12, -8, -4, 0, 4, 8, 12])
 STACK_COLORBAR_TICK_NBINS = 9
 STACK_COLORBAR_LABEL_SIZE = 13
 STACK_COLORBAR_TICK_SIZE = 11
@@ -219,8 +219,8 @@ STACK_AGE_FIG_WIDTH_PER_COL = 3.75
 STACK_AGE_FIG_HEIGHT_PER_ROW = 3.35
 STACK_AGE_GRID_LEFT = 0.105
 STACK_AGE_GRID_BOTTOM = 0.06
-STACK_AGE_GRID_TOP = 0.90
-STACK_AGE_ROW_LABEL_X = -0.20
+STACK_AGE_GRID_TOP = 0.84
+STACK_AGE_ROW_LABEL_X = -0.25
 STACK_AGE_CBAR_BOTTOM = 0.16
 STACK_AGE_CBAR_HEIGHT = 0.66
 STACK_AGE_SUPTITLE_Y = 0.945
@@ -243,13 +243,13 @@ CAP_RIGHT = 0.98
 CAP_BOTTOM = 0.15
 CAP_TOP = 0.80
 CAP_WSPACE = 0.0
-CAP_PANEL_TITLE_SIZE = 16
+CAP_PANEL_TITLE_SIZE = 18
 CAP_PANEL_TITLE_PAD = 14
 CAP_SUPTITLE_SIZE = 20
-CAP_SUPTITLE_Y = 0.93
-CAP_AXIS_LABEL_SIZE_SECTOR = 16
-CAP_AXIS_LABEL_SIZE_AGE = 16
-CAP_TICK_LABEL_SIZE = 15
+CAP_SUPTITLE_Y = 0.95
+CAP_AXIS_LABEL_SIZE_SECTOR = 18
+CAP_AXIS_LABEL_SIZE_AGE = 18
+CAP_TICK_LABEL_SIZE = 16
 CAP_Y_TICK_NBINS = 10
 CAP_LEGEND_LOC_SECTOR = "upper left"
 CAP_LEGEND_SIZE_SECTOR = 15
@@ -274,8 +274,8 @@ HIST_PANEL_TITLE_SIZE = 15
 HIST_PANEL_TITLE_PAD = 14
 HIST_SUPTITLE_SIZE = 20
 HIST_SUPTITLE_Y = 0.925
-HIST_AXIS_LABEL_SIZE = 15
-HIST_TICK_LABEL_SIZE = 12
+HIST_AXIS_LABEL_SIZE = 18
+HIST_TICK_LABEL_SIZE = 15
 HIST_X_TICK_NBINS = 10
 HIST_LEGEND_LOC = "upper right"
 HIST_LEGEND_SIZE = 10
@@ -288,7 +288,7 @@ HIST_ZERO_LINE_STYLE = "--"
 # These affect only the still-enabled age-split histogram PDFs:
 #   summary_stellar_age_hist_mass_1x3.pdf
 #   summary_stellar_age_hist_ebv_1x3.pdf
-HIST_SHOW_MEDIAN_IN_LEGEND = True
+HIST_SHOW_MEDIAN_IN_LEGEND = False
 HIST_MEDIAN_SCI_PRECISION = 2
 HIST_MEDIAN_TEXT = r"{\rm med}"
 
@@ -313,19 +313,25 @@ STACK_NO_DATA_LABEL = r"{\rm no\ data}"
 STACK_ROW_LABEL_UNORIENTED = r"{\rm Unoriented}"
 STACK_ROW_LABEL_ORIENTED = r"{\rm Oriented}"
 
-STACK_FULL_SUPTITLE = r"{\rm Stacked\ Compton\ }$y${\rm\ Maps:\ Unoriented\ and\ Optically\ Aligned}"
+STACK_FULL_SUPTITLE = r"{\rm Oriented\ Stacked\ Compton\ }$y${\rm\ Maps}"
 STACK_AGE_SUPTITLE = r"{\rm Stellar-age-selected\ Stacked\ Compton\ }$y${\rm\ Maps}"
 STACK_RADIO_SUPTITLE = r"{\rm FIRST-matched\ Radio-source\ Stacked\ Compton\ }$y${\rm\ Maps}"
 
-# Stellar-age split labels.
-AGE_LABEL_MASS_YOUNG_TEMPLATE = r"{{\rm Young\ tail\ ({tail_pct}\%),\ mass-weighted\ age}}"
-AGE_LABEL_MASS_OLD_TEMPLATE = r"{{\rm Old\ tail\ ({tail_pct}\%),\ mass-weighted\ age}}"
-AGE_LABEL_LIGHT_YOUNG_TEMPLATE = r"{{\rm Young\ tail\ ({tail_pct}\%),\ light-weighted\ age}}"
-AGE_LABEL_LIGHT_OLD_TEMPLATE = r"{{\rm Old\ tail\ ({tail_pct}\%),\ light-weighted\ age}}"
+# Stellar-age split axis labels.
+STACK_AGE_ROW_LABEL_MASS_YOUNG = r"{\rm Young\ mass-weighted}"
+STACK_AGE_ROW_LABEL_MASS_OLD = r"{\rm Old\ mass-weighted}"
+STACK_AGE_ROW_LABEL_LIGHT_YOUNG = r"{\rm Young\ light-weighted}"
+STACK_AGE_ROW_LABEL_LIGHT_OLD = r"{\rm Old\ light-weighted}"
+
+# Stellar-age split legend labels.
+AGE_LABEL_MASS_YOUNG_TEMPLATE = r"{{\rm Young\ mass-weighted\ age\ tail\ ({tail_pct}\%)}}"
+AGE_LABEL_MASS_OLD_TEMPLATE = r"{{\rm Old\ mass-weighted\ age\ tail\ ({tail_pct}\%)}}"
+AGE_LABEL_LIGHT_YOUNG_TEMPLATE = r"{{\rm Young\ light-weighted\ age\ tail\ ({tail_pct}\%)}}"
+AGE_LABEL_LIGHT_OLD_TEMPLATE = r"{{\rm Old\ light-weighted\ age\ tail\ ({tail_pct}\%)}}"
 
 # CAP-profile labels.
 CAP_X_LABEL = r"$\theta_{\rm d}\ [{\rm arcmin}]$"
-CAP_Y_LABEL = r"$y_{\rm CAP}\ [y\,{\rm arcmin}^{2}]$"
+CAP_Y_LABEL = r"$y_{\mathrm{CAP}}\ [y\,\mathrm{arcmin}^{2}]$"
 CAP_NO_SECTOR_DATA_LABEL = r"{\rm no\ sector\ CAP\ data}"
 CAP_MAJOR_SECTOR_LABEL = r"{\rm Major-axis\ sector}"
 CAP_MINOR_SECTOR_LABEL = r"{\rm Minor-axis\ sector}"
@@ -1355,10 +1361,10 @@ def _prune_touching_x_ticks(ax, nbins=HIST_X_TICK_NBINS):
     ax.xaxis.set_major_locator(MaxNLocator(nbins=nbins, prune="both"))
 
 
-def _prune_touching_xy_ticks(ax, nbins=STACK_XY_TICK_NBINS):
-    """Avoid overlapping x and y tick labels on touching image grids."""
-    ax.xaxis.set_major_locator(MaxNLocator(nbins=nbins, prune="both"))
-    ax.yaxis.set_major_locator(MaxNLocator(nbins=nbins, prune="both"))
+def _prune_touching_xy_ticks(ax):
+    """Set fixed x/y ticks for stacked image panels."""
+    ax.set_xticks(STACK_XY_TICKS)
+    ax.set_yticks(STACK_XY_TICKS)
 
 
 def _mass_bin_label(mass_lo, mass_hi):
@@ -1561,10 +1567,10 @@ def plot_summary_age_split_stacks(all_bin_results, out_dir, stack_norm):
     tail_pct = _split_tail_pct_label()
 
     row_defs = [
-        ("mass_age", "lo", AGE_LABEL_MASS_YOUNG_TEMPLATE.format(tail_pct=tail_pct)),
-        ("mass_age", "hi", AGE_LABEL_MASS_OLD_TEMPLATE.format(tail_pct=tail_pct)),
-        ("light_age", "lo", AGE_LABEL_LIGHT_YOUNG_TEMPLATE.format(tail_pct=tail_pct)),
-        ("light_age", "hi", AGE_LABEL_LIGHT_OLD_TEMPLATE.format(tail_pct=tail_pct)),
+        ("mass_age", "lo", STACK_AGE_ROW_LABEL_MASS_YOUNG),
+        ("mass_age", "hi", STACK_AGE_ROW_LABEL_MASS_OLD),
+        ("light_age", "lo", STACK_AGE_ROW_LABEL_LIGHT_YOUNG),
+        ("light_age", "hi", STACK_AGE_ROW_LABEL_LIGHT_OLD),
     ]
 
     nrows = len(row_defs)
