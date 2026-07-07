@@ -184,15 +184,15 @@ SAVEFIG_BBOX_INCHES = "tight"
 SAVEFIG_PAD_INCHES = 0.0
 
 # Shared stack-image aesthetics.
-STACK_PANEL_TITLE_SIZE = 15
-STACK_PANEL_TITLE_PAD = 14
-STACK_SUPTITLE_SIZE = 20
+STACK_PANEL_TITLE_SIZE = 14
+STACK_PANEL_TITLE_PAD = 16
+STACK_SUPTITLE_SIZE = 18
 STACK_AXIS_LABEL_SIZE = 15
-STACK_TICK_LABEL_SIZE = 9
+STACK_TICK_LABEL_SIZE = 12
 STACK_N_LABEL_SIZE = 10
 STACK_NO_DATA_SIZE = 9
 STACK_ROW_LABEL_SIZE = 16
-STACK_XY_TICK_NBINS = 5
+STACK_XY_TICK_NBINS = 7
 STACK_COLORBAR_TICK_NBINS = 9
 STACK_COLORBAR_LABEL_SIZE = 13
 STACK_COLORBAR_TICK_SIZE = 11
@@ -209,7 +209,7 @@ STACK_FULL_FIG_HEIGHT_PER_ROW = 3.75
 STACK_FULL_GRID_LEFT = 0.075
 STACK_FULL_GRID_BOTTOM = 0.08
 STACK_FULL_GRID_TOP = 0.86
-STACK_FULL_ROW_LABEL_X = -0.18
+STACK_FULL_ROW_LABEL_X = -0.25
 STACK_FULL_CBAR_BOTTOM = 0.18
 STACK_FULL_CBAR_HEIGHT = 0.62
 STACK_FULL_SUPTITLE_Y = 0.94
@@ -246,7 +246,7 @@ CAP_WSPACE = 0.0
 CAP_PANEL_TITLE_SIZE = 16
 CAP_PANEL_TITLE_PAD = 14
 CAP_SUPTITLE_SIZE = 20
-CAP_SUPTITLE_Y = 0.925
+CAP_SUPTITLE_Y = 0.93
 CAP_AXIS_LABEL_SIZE_SECTOR = 16
 CAP_AXIS_LABEL_SIZE_AGE = 16
 CAP_TICK_LABEL_SIZE = 15
@@ -254,7 +254,7 @@ CAP_Y_TICK_NBINS = 10
 CAP_LEGEND_LOC_SECTOR = "upper left"
 CAP_LEGEND_SIZE_SECTOR = 15
 CAP_LEGEND_LOC_AGE = "upper left"
-CAP_LEGEND_SIZE_AGE = 5
+CAP_LEGEND_SIZE_AGE = 15
 CAP_ERROR_CAPSIZE = 3
 CAP_ERROR_LW = 1.3
 CAP_ERROR_MARKER_SIZE = 5
@@ -638,12 +638,6 @@ def mean_profile_and_covariance(profiles, weights=None, seed=SEED):
     std = np.sqrt(np.clip(np.diag(cov), 0.0, None))
 
     return mean.astype(np.float64), std.astype(np.float64), cov.astype(np.float64), n
-
-# Backward-compatible wrapper for any future call sites that still expect
-# only mean, one-sigma errors, and sample size.
-def mean_profile_and_error(profiles, seed=SEED, weights=None):
-    mean, std, cov, n = mean_profile_and_covariance(profiles, weights=weights, seed=seed)
-    return mean, std, n
 
 
 # ============================================================
@@ -1862,50 +1856,11 @@ def plot_summary_radio_full_stacks(all_bin_results, out_dir, stack_norm):
     plt.close(fig)
     print(f"  [summary radio full stacks] {path}")
 
-
-def _cap_sig(value, error):
-    value = float(value)
-    error = float(error)
-    if not np.isfinite(value) or not np.isfinite(error) or error <= 0.0:
-        return np.nan
-    return value / error
-
-
-def _cap_diff_sig(value_a, error_a, value_b, error_b):
-    value_a = float(value_a)
-    error_a = float(error_a)
-    value_b = float(value_b)
-    error_b = float(error_b)
-    diff = value_a - value_b
-    diff_error = np.sqrt(error_a ** 2 + error_b ** 2)
-    if not np.isfinite(diff) or not np.isfinite(diff_error) or diff_error <= 0.0:
-        return diff, diff_error, np.nan
-    return diff, diff_error, diff / diff_error
-
-
-def _cap_fmt_value(x):
-    x = float(x)
-    if not np.isfinite(x):
-        return "nan"
-    return f"{x:.6e}"
-
-
 def _cap_fmt_sigma(x):
     x = float(x)
     if not np.isfinite(x):
         return "nan"
     return f"{x:.3f}"
-
-
-def _print_cap_table(title, columns, rows):
-    print("\n" + title)
-    print("\t".join(columns))
-    if len(rows) == 0:
-        print("no data")
-        return
-    for row in rows:
-        print("\t".join(row))
-
 
 def _cap_total_sigma(sigmas):
     sigmas = np.asarray(sigmas, dtype=np.float64)
