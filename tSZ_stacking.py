@@ -65,8 +65,8 @@ BA_MAX               = 1.0
 
 # Orientation and sector settings.
 WEDGE_HALF_DEG   = 45.0
-MAJOR_AXIS_ANGLE = 90.0
-MINOR_AXIS_ANGLE = 0.0
+MAJOR_AXIS_ANGLE = 0.0
+MINOR_AXIS_ANGLE = 90.0
 
 # CAP settings.
 CAP_N_AP          = 6
