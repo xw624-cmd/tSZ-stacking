@@ -188,6 +188,10 @@ SAVEFIG_DPI = 220
 SAVEFIG_BBOX_INCHES = "tight"
 SAVEFIG_PAD_INCHES = 0.0
 
+# Display scaling for small Compton-y and CAP values.
+# The data are not rescaled; only tick labels are shown in units of 1e-6.
+DISPLAY_Y_SCALE = 1e6
+
 # Shared stack-image aesthetics.
 # These are shared across all stacked-map figures.
 STACK_NO_DATA_SIZE = 9
@@ -195,6 +199,9 @@ STACK_XY_TICKS = np.array([-12, -8, -4, 0, 4, 8, 12])
 STACK_COLORBAR_TICK_NBINS = 9
 STACK_COLORBAR_LABEL_SIZE = 13
 STACK_COLORBAR_TICK_SIZE = 11
+STACK_COLORBAR_EXPONENT_LABEL = r"$10^{\mbox{\scriptsize -}6}$"
+STACK_COLORBAR_EXPONENT_SIZE = 13
+STACK_COLORBAR_EXPONENT_PAD = 6
 STACK_COLORBAR_WIDTH = 0.018
 STACK_COLORBAR_PAD = 0.012
 STACK_N_LABEL_X = 0.04
@@ -245,8 +252,8 @@ STACK_AGE_FIG_WIDTH_PER_COL = 3.75
 STACK_AGE_FIG_HEIGHT_PER_ROW = 3.45
 STACK_AGE_GRID_LEFT = 0.125
 STACK_AGE_GRID_BOTTOM = 0.06
-STACK_AGE_GRID_TOP = 0.80
-STACK_AGE_ROW_LABEL_X = -0.32
+STACK_AGE_GRID_TOP = 0.91
+STACK_AGE_ROW_LABEL_X = -0.28
 STACK_AGE_CBAR_BOTTOM = 0.16
 STACK_AGE_CBAR_HEIGHT = 0.66
 STACK_AGE_SUPTITLE_Y = 0.965
@@ -254,12 +261,12 @@ STACK_AGE_SUPTITLE_Y = 0.965
 # Radio-stack summary grid.
 STACK_RADIO_FIG_WIDTH_PER_COL = 3.5
 STACK_RADIO_FIG_HEIGHT = 3.75
-STACK_RADIO_GRID_LEFT = 0.075
+STACK_RADIO_GRID_LEFT = 0.07
 STACK_RADIO_GRID_BOTTOM = 0.12
-STACK_RADIO_GRID_TOP = 0.80
+STACK_RADIO_GRID_TOP = 0.78
 STACK_RADIO_CBAR_BOTTOM = 0.20
 STACK_RADIO_CBAR_HEIGHT = 0.56
-STACK_RADIO_SUPTITLE_Y = 0.965
+STACK_RADIO_SUPTITLE_Y = 0.975
 
 # CAP-profile aesthetics.
 CAP_FIG_WIDTH_PER_COL = 6.35
@@ -267,21 +274,21 @@ CAP_FIG_HEIGHT = 5.25
 CAP_LEFT = 0.08
 CAP_RIGHT = 0.98
 CAP_BOTTOM = 0.15
-CAP_TOP = 0.80  # Backward-compatible default; individual CAP plots use the two values below.
-CAP_SECTOR_TOP = 0.75
-CAP_AGE_TOP = 0.75
+CAP_TOP = 0.78  # Backward-compatible default; individual CAP plots use the two values below.
+CAP_SECTOR_TOP = 0.78
+CAP_AGE_TOP = 0.78
 CAP_WSPACE = 0.0
 CAP_PANEL_TITLE_SIZE = 18
 CAP_PANEL_TITLE_PAD = 14
 CAP_SUPTITLE_SIZE = 20
-CAP_SUPTITLE_Y = 0.95  # Backward-compatible default; individual CAP plots use the two values below.
+CAP_SUPTITLE_Y = 0.9  # Backward-compatible default; individual CAP plots use the two values below.
 CAP_SECTOR_SUPTITLE_Y = 0.94
 CAP_AGE_SUPTITLE_Y = 0.94
 CAP_AXIS_LABEL_SIZE_SECTOR = 18
 CAP_AXIS_LABEL_SIZE_AGE = 18
 CAP_TICK_LABEL_SIZE = 16
 CAP_Y_TICK_NBINS = 10
-CAP_YLABEL_X = -0.25
+CAP_YLABEL_X = -0.1
 CAP_YLABEL_Y = 0.57
 CAP_LEGEND_LOC_SECTOR = "upper left"
 CAP_LEGEND_SIZE_SECTOR = 15
@@ -300,16 +307,16 @@ HIST_FIG_HEIGHT = 5.25
 HIST_LEFT = 0.08
 HIST_RIGHT = 0.98
 HIST_BOTTOM = 0.15
-HIST_TOP = 0.74
+HIST_TOP = 0.8
 HIST_WSPACE = 0.0
-HIST_PANEL_TITLE_SIZE = 15
+HIST_PANEL_TITLE_SIZE = 17
 HIST_PANEL_TITLE_PAD = 14
-HIST_SUPTITLE_SIZE = 20
+HIST_SUPTITLE_SIZE = 22
 HIST_SUPTITLE_Y = 0.965
-HIST_AXIS_LABEL_SIZE = 18
+HIST_AXIS_LABEL_SIZE = 20
 HIST_TICK_LABEL_SIZE = 15
 HIST_X_TICK_NBINS = 10
-HIST_YLABEL_X = -0.11
+HIST_YLABEL_X = -0.09
 HIST_YLABEL_Y = 0.57
 HIST_LEGEND_LOC = "upper right"
 HIST_LEGEND_SIZE = 10
@@ -365,7 +372,7 @@ AGE_LABEL_LIGHT_OLD_TEMPLATE = r"{{\rm Old\ light-weighted\ age\ tail\ ({tail_pc
 
 # CAP-profile labels.
 CAP_X_LABEL = r"$\theta_{\rm d}\ [{\rm arcmin}]$"
-CAP_Y_LABEL = r"$y_{\mathrm{CAP}}\ [\mathrm{arcmin}^{2}]$"
+CAP_Y_LABEL = r"$y_{\mathrm{CAP}}\ [10^{-6}\,\mathrm{arcmin}^{2}]$"
 CAP_NO_SECTOR_DATA_LABEL = r"{\rm no\ sector\ CAP\ data}"
 CAP_MAJOR_SECTOR_LABEL = r"{\rm Major-axis\ sector}"
 CAP_MINOR_SECTOR_LABEL = r"{\rm Minor-axis\ sector}"
@@ -1298,29 +1305,53 @@ SUMMARY_PDF_NAMES = [
 ]
 
 
-def _tex_sci_notation(x, pos=None):
-    """Format tick values as explicit LaTeX scientific notation, with no axis offset."""
-    if not np.isfinite(x):
+def _latex_visible_minus_number(value, precision=3, zero_tol=1e-12):
+    """Return a LaTeX math-mode number with a visible text-mode minus sign.
+
+    Some PDF viewers/rasterizers make the math minus extremely thin or nearly
+    invisible in small tick labels.  Using ``\\mathrm{-}`` forces a heavier visible
+    minus while keeping the labels in LaTeX.
+    """
+    if not np.isfinite(value):
         return ""
-    if abs(x) < 1e-99:
+
+    value = float(value)
+    if abs(value) < zero_tol:
         return r"$0$"
 
-    exponent = int(np.floor(np.log10(abs(x))))
-    mantissa = x / (10.0 ** exponent)
+    sign = r"\mathrm{-}" if value < 0.0 else ""
+    value_abs = abs(value)
 
-    if abs(mantissa - round(mantissa)) < 1e-8:
-        mantissa_str = f"{int(round(mantissa))}"
+    if abs(value_abs - round(value_abs)) < 1e-8:
+        body = f"{int(round(value_abs))}"
     else:
-        mantissa_str = f"{mantissa:.2f}".rstrip("0").rstrip(".")
+        body = f"{value_abs:.{precision}g}"
 
-    if exponent == 0:
-        return rf"${mantissa_str}$"
-    return rf"${mantissa_str}\times 10^{{{exponent}}}$"
+    return rf"${sign}{body}$"
+
+
+def _tex_scaled_tick(x, pos=None):
+    """Format tick values after scaling by DISPLAY_Y_SCALE.
+
+    The plotted data remain in their original units.  Only the tick labels
+    are multiplied by 1e6, while the axis/colorbar labels carry the 10^{-6}
+    factor.
+    """
+    return _latex_visible_minus_number(x * DISPLAY_Y_SCALE, precision=3)
+
+
+def _tex_unscaled_tick(x, pos=None):
+    """Format ordinary stacked-map x/y ticks with visible minus signs."""
+    return _latex_visible_minus_number(x, precision=3)
 
 
 def _apply_scientific_y_ticks(ax, nbins=CAP_Y_TICK_NBINS):
+    """Apply scaled CAP y-axis tick labels.
+
+    Function name is kept unchanged so existing plotting calls still work.
+    """
     ax.yaxis.set_major_locator(MaxNLocator(nbins=nbins))
-    ax.yaxis.set_major_formatter(FuncFormatter(_tex_sci_notation))
+    ax.yaxis.set_major_formatter(FuncFormatter(_tex_scaled_tick))
     ax.yaxis.get_offset_text().set_visible(False)
 
 def _shared_cap_ylim(mean_err_pairs, pad_frac=0.08):
@@ -1361,11 +1392,16 @@ def _shared_cap_ylim(mean_err_pairs, pad_frac=0.08):
 
 def _format_colorbar(cb, label):
     cb.locator = MaxNLocator(nbins=STACK_COLORBAR_TICK_NBINS)
-    cb.formatter = FuncFormatter(_tex_sci_notation)
+    cb.formatter = FuncFormatter(_tex_scaled_tick)
     cb.update_ticks()
     cb.ax.yaxis.get_offset_text().set_visible(False)
     cb.set_label(label, fontsize=STACK_COLORBAR_LABEL_SIZE)
     cb.ax.tick_params(labelsize=STACK_COLORBAR_TICK_SIZE)
+    cb.ax.set_title(
+        STACK_COLORBAR_EXPONENT_LABEL,
+        fontsize=STACK_COLORBAR_EXPONENT_SIZE,
+        pad=STACK_COLORBAR_EXPONENT_PAD,
+    )
 
 
 def _set_touching_square_grid(fig, axes, left, bottom, top):
@@ -1400,9 +1436,11 @@ def _prune_touching_x_ticks(ax, nbins=HIST_X_TICK_NBINS):
 
 
 def _prune_touching_xy_ticks(ax):
-    """Set fixed x/y ticks for stacked image panels."""
+    """Set fixed x/y ticks for stacked image panels, with visible minus signs."""
     ax.set_xticks(STACK_XY_TICKS)
     ax.set_yticks(STACK_XY_TICKS)
+    ax.xaxis.set_major_formatter(FuncFormatter(_tex_unscaled_tick))
+    ax.yaxis.set_major_formatter(FuncFormatter(_tex_unscaled_tick))
 
 
 def _set_hist_ylabel(ax, label):
@@ -2782,7 +2820,12 @@ def _latex_sci_value(value, precision=HIST_MEDIAN_SCI_PRECISION):
 
     if exponent == 0:
         return mantissa_str
-    return rf"{mantissa_str}\times 10^{{{exponent}}}"
+
+    if exponent < 0:
+        exponent_str = rf"\mathrm{{-}}{abs(exponent)}"
+    else:
+        exponent_str = f"{exponent}"
+    return rf"{mantissa_str}\times 10^{{{exponent_str}}}"
 
 def _hist_legend_label_with_median(label, var_name, median_value):
     """Append median value to the stellar-age split histogram legend label."""
