@@ -65,7 +65,7 @@ PHOTO_TYPE_GALAXY    = 3
 BA_MAX               = 0.75
 
 # Orientation and sector settings.
-WEDGE_HALF_DEG   = 45.0
+WEDGE_HALF_DEG   = 15.0
 MAJOR_AXIS_ANGLE = 90.0
 MINOR_AXIS_ANGLE = 0.0
 
@@ -1295,6 +1295,7 @@ SUMMARY_PDF_NAMES = [
     "summary_oriented_full_stack_2x3.pdf",
     "summary_stellar_age_stack_4x3.pdf",
     "summary_oriented_full_stack_cap_profiles_1x3.pdf",
+    "summary_oriented_sector_cap_correlation_2x3.pdf",
     "summary_stellar_age_cap_profiles_1x3.pdf",
     "summary_radio_full_stack_1x3.pdf",
     "summary_stellar_age_hist_mass_1x3.pdf",
@@ -1770,6 +1771,116 @@ def plot_summary_age_split_stacks(all_bin_results, out_dir, stack_norm):
     _savefig(path)
     plt.close(fig)
     print(f"  [summary age stacks] {path}")
+
+
+def _cov_to_correlation(cov):
+    """Normalize a bootstrap covariance matrix into a correlation matrix.
+
+    Guards zero/degenerate variance entries (returns NaN there instead of
+    dividing by zero) and forces the diagonal to exactly 1.0.
+    """
+    cov = np.asarray(cov, dtype=np.float64)
+    std = np.sqrt(np.clip(np.diag(cov), 0.0, None))
+    denom = np.outer(std, std)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        corr = np.where(denom > 0.0, cov / denom, np.nan)
+    np.fill_diagonal(corr, 1.0)
+    return corr
+
+
+CAP_CORR_CMAP = "YlOrRd"
+CAP_CORR_VMIN = 0.0
+CAP_CORR_VMAX = 1.0
+CAP_CORR_FIG_WIDTH_PER_COL = 5.4
+CAP_CORR_FIG_HEIGHT_PER_ROW = 5.4
+CAP_CORR_WSPACE = 0.12
+CAP_CORR_N_TICKS = 6
+CAP_CORR_TICK_LABEL_SIZE = 12
+CAP_CORR_AXIS_LABEL_SIZE = 14
+CAP_CORR_PANEL_TITLE_SIZE = 16
+CAP_CORR_PANEL_TITLE_PAD = 10
+CAP_CORR_CBAR_LABEL_SIZE = 14
+CAP_CORR_SUPTITLE = r"{\rm Oriented-stack\ CAP\ Correlation\ Matrices}"
+CAP_CORR_SUPTITLE_Y = 0.98
+
+
+def plot_summary_sector_cap_correlation(all_bin_results, out_dir):
+    """2 rows (major top, minor bottom) x N mass-bin columns of CAP correlation matrices.
+
+    Fully scalable: the tick count/positions and matrix size follow
+    CAP_RADII_ARCMIN, and the column count follows MASS_BINS, so changing
+    CAP_N_AP, the aperture range, or the number of mass bins requires no
+    edits here.
+    """
+    if len(all_bin_results) == 0:
+        return
+
+    n_cols = len(MASS_BINS)
+    n_ap = len(CAP_RADII_ARCMIN)
+
+    fig, axes = plt.subplots(
+        2,
+        n_cols,
+        figsize=(CAP_CORR_FIG_WIDTH_PER_COL * n_cols, CAP_CORR_FIG_HEIGHT_PER_ROW * 2),
+        squeeze=False,
+    )
+
+    tick_idx = np.unique(np.linspace(0, n_ap - 1, min(n_ap, CAP_CORR_N_TICKS)).round().astype(int))
+    tick_labels = [f"{CAP_RADII_ARCMIN[i]:.1f}" for i in tick_idx]
+
+    sector_rows = [
+        ("cap_major_cov", CAP_MAJOR_SECTOR_LABEL),
+        ("cap_minor_cov", CAP_MINOR_SECTOR_LABEL),
+    ]
+
+    im = None
+    for row, (cov_key, sector_label) in enumerate(sector_rows):
+        for c, bin_result in enumerate(all_bin_results):
+            ax = axes[row][c]
+            mass_lo = bin_result.get("mass_lo", MASS_BINS[c][0])
+            mass_hi = bin_result.get("mass_hi", MASS_BINS[c][1])
+            res = bin_result.get("full_stack", {})
+            cov = res.get(cov_key)
+
+            if cov is None or not np.all(np.isfinite(cov)):
+                ax.text(
+                    0.5, 0.5, CAP_NO_SECTOR_DATA_LABEL,
+                    transform=ax.transAxes, ha="center", va="center", color="0.35",
+                )
+                ax.set_xticks([])
+                ax.set_yticks([])
+                continue
+
+            corr = _cov_to_correlation(cov)
+            im = ax.imshow(
+                corr, origin="lower", cmap=CAP_CORR_CMAP,
+                vmin=CAP_CORR_VMIN, vmax=CAP_CORR_VMAX, aspect="equal",
+            )
+
+            ax.set_xticks(tick_idx)
+            ax.set_yticks(tick_idx)
+            ax.set_xticklabels(tick_labels, fontsize=CAP_CORR_TICK_LABEL_SIZE)
+            ax.set_yticklabels(tick_labels, fontsize=CAP_CORR_TICK_LABEL_SIZE)
+
+            ax.set_xlabel(CAP_X_LABEL, fontsize=CAP_CORR_AXIS_LABEL_SIZE)
+            ax.set_ylabel(CAP_X_LABEL, fontsize=CAP_CORR_AXIS_LABEL_SIZE)
+
+            title = f"{sector_label}\n{_mass_bin_label(mass_lo, mass_hi)}"
+            ax.set_title(title, fontsize=CAP_CORR_PANEL_TITLE_SIZE, pad=CAP_CORR_PANEL_TITLE_PAD)
+
+    if im is not None:
+        fig.subplots_adjust(left=0.07, right=0.90, bottom=0.06, top=0.88, wspace=CAP_CORR_WSPACE, hspace=0.4)
+        cbar_ax = fig.add_axes([0.92, 0.08, 0.02, 0.80])
+        cbar = fig.colorbar(im, cax=cbar_ax)
+        cbar.set_label(r"${\rm Correlation}$", fontsize=CAP_CORR_CBAR_LABEL_SIZE)
+        cbar.ax.tick_params(labelsize=CAP_CORR_TICK_LABEL_SIZE)
+
+    fig.suptitle(CAP_CORR_SUPTITLE, fontsize=CAP_SUPTITLE_SIZE, y=CAP_CORR_SUPTITLE_Y)
+
+    path = os.path.join(out_dir, "summary_oriented_sector_cap_correlation_2x3.pdf")
+    _savefig(path)
+    plt.close(fig)
+    print(f"  [summary sector CAP correlation] {path}")
 
 
 def plot_summary_sector_cap_profiles(all_bin_results, out_dir):
@@ -3267,6 +3378,7 @@ def main():
     plot_summary_full_mass_stacks(all_bin_results, SUMMARY_DIR, stack_norm)
     plot_summary_age_split_stacks(all_bin_results, SUMMARY_DIR, stack_norm)
     plot_summary_sector_cap_profiles(all_bin_results, SUMMARY_DIR)
+    plot_summary_sector_cap_correlation(all_bin_results, SUMMARY_DIR)
     plot_summary_age_split_cap_profiles(all_bin_results, SUMMARY_DIR)
     plot_summary_radio_full_stacks(all_bin_results, SUMMARY_DIR, stack_norm)
     plot_summary_age_split_histograms(all_bin_results, h5f, SUMMARY_DIR, "logm")
