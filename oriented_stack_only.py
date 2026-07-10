@@ -34,6 +34,7 @@ pipe.USE_DISK_CUT = False
 ORIENTED_PDF_NAMES = [
     "summary_oriented_full_stack_2x3.pdf",
     "summary_oriented_full_stack_cap_profiles_1x3.pdf",
+    "summary_oriented_sector_cap_correlation_2x3.pdf",
     "summary_oriented_hist_ba_selected_1x3.pdf",
     "summary_radio_full_stack_1x3.pdf",
 ]
@@ -109,6 +110,7 @@ def main():
     stack_norm = pipe._shared_stack_norm(pipe._collect_stack_values_from_results(all_bin_results))
     pipe.plot_summary_full_mass_stacks(all_bin_results, pipe.SUMMARY_DIR, stack_norm)
     pipe.plot_summary_sector_cap_profiles(all_bin_results, pipe.SUMMARY_DIR)
+    pipe.plot_summary_sector_cap_correlation(all_bin_results, pipe.SUMMARY_DIR)
     pipe.plot_summary_radio_full_stacks(all_bin_results, pipe.SUMMARY_DIR, stack_norm)
     pipe.plot_summary_oriented_selected_ba_histograms(all_bin_results, h5f, pipe.SUMMARY_DIR)
     pipe.print_cap_significance_tables(all_bin_results)
