@@ -27,9 +27,10 @@ def sector_polygon(theta1, theta2, L=1.0):
 fig, ax = plt.subplots(figsize=(5.2, 5.2), dpi=300)
 
 L = 1.0
-major_color = "#c1666b"
+#major_color = "#c1666b"
+major_color = "#771704"
 minor_color = "#5b7fa6"
-unused_color = "#e6e6e6"
+unused_color = "#717171"
 frame_color = "#444444"
 
 ax.add_patch(Rectangle((-L, -L), 2*L, 2*L, facecolor=unused_color, edgecolor="none", zorder=0))
