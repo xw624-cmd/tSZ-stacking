@@ -55,14 +55,14 @@ for ang in boundary_angles:
 ax.add_patch(Rectangle((-L, -L), 2*L, 2*L, fill=False, edgecolor=frame_color,
                         linewidth=0.9, zorder=4))
 
-ax.plot([0, 0.9*L], [0, 0], color=frame_color, lw=0.7, ls=(0, (4, 3)), zorder=3)
+ax.plot([0, 0.9*L], [0, 0], color="white", lw=0.7, ls=(0, (4, 3)), zorder=3)
 
-arc = Arc((0, 0), 0.34, 0.34, angle=0, theta1=0, theta2=15, color=frame_color, lw=0.9, zorder=3)
+arc = Arc((0, 0), 0.34, 0.34, angle=0, theta1=0, theta2=15, color="white", lw=0.9, zorder=3)
 ax.add_patch(arc)
 phi_ang = np.deg2rad(7.5)
 phi_r = 0.27
 ax.text(phi_r*np.cos(phi_ang), phi_r*np.sin(phi_ang), r"$\phi$",
-        ha="center", va="center", fontsize=12, color=frame_color)
+        ha="center", va="center", fontsize=12, color="white")
 
 label_defs = [
     (90, "90°", major_color, 0.55),
