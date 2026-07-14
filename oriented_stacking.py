@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Standalone oriented tSZ stacking pipeline. Contains no stellar-age split machinery.
+"""Oriented tSZ stacking pipeline.
 
 CAP fitting follows the emcee line-fitting tutorial
 (https://emcee.readthedocs.io/en/stable/tutorials/line/):
@@ -21,6 +21,7 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import TwoSlopeNorm
 from matplotlib.ticker import FuncFormatter, MaxNLocator
 from matplotlib.backends.backend_pdf import PdfPages
+from matplotlib.lines import Line2D
 from astropy.io import fits
 from pixell import enmap, reproject, utils
 from scipy.interpolate import RectBivariateSpline
@@ -42,6 +43,11 @@ plt.rcParams.update({
     "font.family": "serif",
     "font.serif": ["Computer Modern Roman"],
     "axes.unicode_minus": False,
+    "text.latex.preamble": "\n".join([
+        r"\usepackage[T1]{fontenc}",
+        r"\usepackage{textcomp}",
+        r"\usepackage{amsmath}",
+    ]),
 })
 
 
@@ -182,7 +188,7 @@ STACK_COLORBAR_LABEL_SIZE = 13
 
 STACK_COLORBAR_TICK_SIZE = 11
 
-STACK_COLORBAR_EXPONENT_LABEL = '$10^{\\mbox{\\scriptsize -}6}$'
+STACK_COLORBAR_EXPONENT_LABEL = '$10^{\\text{\\textminus} 6}$'
 
 STACK_COLORBAR_EXPONENT_SIZE = 13
 
@@ -196,6 +202,13 @@ CAP_MCMC_DISPLAY_SCALE = DISPLAY_Y_SCALE
 CAP_MCMC_EXPONENT = -6
 
 CAP_MCMC_TITLE_DECIMALS = 4
+
+# Corner-plot diagonal title size.  This was hardcoded to 8, which pushed the
+# scriptsize super/subscripts down to ~5.6pt, where Computer Modern's minus
+# thins to a hairline and PDF viewers drop it.  Keep this at 11 or above.
+CAP_MCMC_TITLE_SIZE = 8
+
+CAP_MCMC_SUPTITLE_SIZE = 16
 
 CAP_MCMC_TICK_DECIMALS = 4
 
@@ -403,7 +416,7 @@ STACK_RADIO_SUPTITLE = '{\\rm FIRST-matched\\ Radio-source\\ Stacked\\ Compton\\
 
 CAP_X_LABEL = '$\\theta_{\\rm d}\\ [{\\rm arcmin}]$'
 
-CAP_Y_LABEL = '$y_{\\mathrm{CAP}}\\ [10^{-6}\\,\\mathrm{arcmin}^{2}]$'
+CAP_Y_LABEL = '$y_{\\mathrm{CAP}}\\ [10^{\\text{\\textminus} 6}\\,\\mathrm{arcmin}^{2}]$'
 
 CAP_NO_SECTOR_DATA_LABEL = '{\\rm no\\ sector\\ CAP\\ data}'
 
@@ -427,7 +440,7 @@ CAP_FIT_SECTOR_SUPTITLE = '{\\rm Oriented-stack\\ CAP\\ ' + _CAP_FIT_MODEL_TEX +
 
 CACHE_FILE = os.path.join(CACHE_DIR, 'stamps.h5')
 
-ORIENTED_PDF_NAMES = ['summary_oriented_full_stack_2x3.pdf', 'summary_oriented_full_stack_cap_profiles_1x3.pdf', 'summary_oriented_sector_cap_correlation_2x3.pdf', 'summary_oriented_sector_posterior_curves_1x3.pdf', 'summary_oriented_sector_mcmc_corner_all_bins.pdf', 'summary_oriented_hist_ba_selected_1x3.pdf', 'summary_radio_full_stack_1x3.pdf']
+ORIENTED_PDF_NAMES = ['summary_oriented_full_stack_2x3.pdf', 'summary_oriented_full_stack_cap_profiles_1x3.pdf', 'summary_oriented_sector_cap_correlation_2x3.pdf', 'summary_oriented_sector_posterior_curves_1x3.pdf', 'summary_oriented_hist_ba_selected_1x3.pdf', 'summary_radio_full_stack_1x3.pdf']
 
 if CAP_SHAPE_FIT_MODEL not in _CAP_SHAPE_FIT_DEGREES:
     raise ValueError(
@@ -989,19 +1002,28 @@ def stack_from_cache(h5f, mask, label='', weights=None):
     print(f'  [stack: {label_txt}] {n_sel:,} galaxies used in final stack')
     return {'n_success': n_sel, 'ny': ny, 'nx': nx, 'pixscale': pixscale, 'stack_unori': (stack_sum_unori / sum_w).astype(np.float64), 'stack_ori': (stack_sum_ori / sum_w).astype(np.float64), 'weights': selected_weights.astype(np.float64), 'sum_weights': sum_w, 'cap_full_values': cap_full_values, 'cap_major_values': cap_major_values, 'cap_minor_values': cap_minor_values, 'effective_mask': effective_mask}
 
-def _latex_visible_minus_number(value, precision=3, zero_tol=1e-12):
-    """Return a LaTeX math-mode number with a visible text-mode minus sign.
+def _visible_tex_minus():
+    return '\\text{\\textminus}'
 
-    Some PDF viewers/rasterizers make the math minus extremely thin or nearly
-    invisible in small tick labels.  Using ``\\mathrm{-}`` forces a heavier visible
-    minus while keeping the labels in LaTeX.
+def _tex_visible_exponent(exponent):
+    """Render an integer exponent for use inside ``10^{...}`` with the
+    visible minus sign instead of a bare ``-``."""
+    exponent = int(exponent)
+    if exponent < 0:
+        return f'{_visible_tex_minus()}{abs(exponent)}'
+    return f'{exponent}'
+
+def _latex_visible_minus_number(value, precision=3, zero_tol=1e-12):
+    """Return a LaTeX math-mode number using the visible minus glyph.
+
+    See _visible_tex_minus for why the ordinary math minus is avoided.
     """
     if not np.isfinite(value):
         return ''
     value = float(value)
     if abs(value) < zero_tol:
         return '$0$'
-    sign = '\\mathrm{-}' if value < 0.0 else ''
+    sign = _visible_tex_minus() if value < 0.0 else ''
     value_abs = abs(value)
     if abs(value_abs - round(value_abs)) < 1e-08:
         body = f'{int(round(value_abs))}'
@@ -1022,27 +1044,27 @@ def _tex_unscaled_tick(x, pos=None):
     """Format ordinary stacked-map x/y ticks with visible minus signs."""
     return _latex_visible_minus_number(x, precision=3)
 
-def _latex_fixed_decimal_number(value, decimals=CAP_MCMC_TICK_DECIMALS, zero_tol=1e-12):
-    """Return a LaTeX number using fixed-point notation only.
+def _fixed_decimal_body(value, decimals, strip_zeros):
+    """Fixed-point number, visible minus, never e notation.
 
-    This deliberately never uses Python/Matplotlib ``e`` notation.  It is
-    used for corner-plot axes after the samples have been scaled into fixed
-    10^{-6} units.
+    Returns bare TeX (no surrounding $ ... $) so it can be dropped either into
+    its own math span or into a larger one such as a corner-plot title.
     """
-    if not np.isfinite(value):
-        return ''
     value = float(value)
-    if abs(value) < zero_tol:
-        return '$0$'
-    sign = '\\mathrm{-}' if value < 0.0 else ''
-    body = f'{abs(value):.{int(decimals)}f}'.rstrip('0').rstrip('.')
-    if body == '':
-        body = '0'
-    return f'${sign}{body}$'
+    decimals = int(decimals)
+    if abs(value) < 0.5 * 10.0 ** (-decimals):
+        return '0' if strip_zeros else f'{0.0:.{decimals}f}'
+    sign = _visible_tex_minus() if value < 0.0 else ''
+    body = f'{abs(value):.{decimals}f}'
+    if strip_zeros:
+        body = body.rstrip('0').rstrip('.') or '0'
+    return f'{sign}{body}'
 
 def _tex_cap_mcmc_tick(x, pos=None):
-    """Format already-scaled CAP MCMC ticks with no e notation."""
-    return _latex_fixed_decimal_number(x, decimals=CAP_MCMC_TICK_DECIMALS)
+    """Tick formatter for the already-scaled CAP MCMC corner axes."""
+    if not np.isfinite(x):
+        return ''
+    return f'${_fixed_decimal_body(x, CAP_MCMC_TICK_DECIMALS, strip_zeros=True)}$'
 
 def _cap_mcmc_parameter_label(name, sector_subscript, degree):
     """Corner-axis label with the fixed 10^{-6} coefficient unit.
@@ -1051,11 +1073,12 @@ def _cap_mcmc_parameter_label(name, sector_subscript, degree):
     arcmin^(2-p).  The displayed numerical value is the physical coefficient
     divided by 10^{-6}.
     """
+    exponent_tex = _tex_visible_exponent(CAP_MCMC_EXPONENT)
     names = _cap_coefficient_names(degree)
     try:
         index = names.index(name)
     except ValueError:
-        return f'${name}_{{\\rm {sector_subscript}}}\\,[10^{{{CAP_MCMC_EXPONENT}}}]$'
+        return f'${name}_{{\\rm {sector_subscript}}}\\,[10^{{{exponent_tex}}}]$'
     power = degree - index
     arcmin_power = 2 - power
     if arcmin_power == 0:
@@ -1064,24 +1087,104 @@ def _cap_mcmc_parameter_label(name, sector_subscript, degree):
         unit = '\\,\\mathrm{arcmin}'
     else:
         unit = f'\\,\\mathrm{{arcmin}}^{{{arcmin_power}}}'
-    return f'${name}_{{\\rm {sector_subscript}}}\\,[10^{{{CAP_MCMC_EXPONENT}}}{unit}]$'
+    return f'${name}_{{\\rm {sector_subscript}}}\\,[10^{{{exponent_tex}}}{unit}]$'
+
+def _set_cap_mcmc_corner_titles(fig, summary, labels, fontsize=CAP_MCMC_TITLE_SIZE):
+    """Set the diagonal titles to "<label> = median +err -err".
+
+    ``corner`` can build these itself via show_titles=True, but it would
+    re-derive the label text and use a bare math minus.  Building them here
+    reuses ``labels`` verbatim from the axis-label list and the already
+    computed posterior percentiles, so the label and the minus sign are
+    identical to the ones on the side axes.
+
+    summary : the dict from _posterior_percentile_summary, with its values
+        already multiplied by CAP_MCMC_DISPLAY_SCALE.
+    """
+    ndim = len(labels)
+    axes = np.asarray(fig.axes, dtype=object)
+    if axes.size != ndim * ndim:
+        return
+    axes = axes.reshape((ndim, ndim))
+    fmt = lambda v: _fixed_decimal_body(v, CAP_MCMC_TITLE_DECIMALS, strip_zeros=False)
+    minus = _visible_tex_minus()
+    for i in range(ndim):
+        median = fmt(summary['median'][i])
+        plus = fmt(summary['err_plus'][i])
+        low = fmt(summary['err_minus'][i])
+        axes[i, i].set_title(
+            f'{labels[i]} $= {median}^{{+{plus}}}_{{{minus}{low}}}$',
+            fontsize=fontsize,
+        )
+
+def _set_cap_mcmc_corner_titles_overlay(fig, major_summary, minor_summary, names, degree, fontsize=CAP_MCMC_TITLE_SIZE):
+    """Set diagonal titles for an overlaid major/minor corner plot.
+
+    Each diagonal title gets up to two lines:
+      1. major-sector posterior summary
+      2. minor-sector posterior summary
+
+    The summary values should already be multiplied by CAP_MCMC_DISPLAY_SCALE.
+    """
+    ndim = len(names)
+    axes = np.asarray(fig.axes, dtype=object)
+    if axes.size != ndim * ndim:
+        return
+    axes = axes.reshape((ndim, ndim))
+
+    fmt = lambda v: _fixed_decimal_body(v, CAP_MCMC_TITLE_DECIMALS, strip_zeros=False)
+    minus = _visible_tex_minus()
+
+    for i, name in enumerate(names):
+        lines = []
+
+        if major_summary is not None:
+            label_maj = _cap_mcmc_parameter_label(name, 'maj', degree)
+            median = fmt(major_summary['median'][i])
+            plus = fmt(major_summary['err_plus'][i])
+            low = fmt(major_summary['err_minus'][i])
+            lines.append(
+                f'{label_maj} $= {median}^{{+{plus}}}_{{{minus}{low}}}$'
+            )
+
+        if minor_summary is not None:
+            label_min = _cap_mcmc_parameter_label(name, 'min', degree)
+            median = fmt(minor_summary['median'][i])
+            plus = fmt(minor_summary['err_plus'][i])
+            low = fmt(minor_summary['err_minus'][i])
+            lines.append(
+                f'{label_min} $= {median}^{{+{plus}}}_{{{minus}{low}}}$'
+            )
+
+        axes[i, i].set_title('\n'.join(lines), fontsize=fontsize)
 
 def _format_cap_mcmc_corner_axes(fig, ndim):
-    """Force all corner tick labels to fixed decimals in 10^{-6} units."""
+    """Apply the no-e-notation, visible-minus tick formatter to a corner plot.
+
+    ``corner`` already does the axis work that used to be reimplemented here:
+    it gives each parameter one common numerical range wherever that parameter
+    appears (horizontally in its column and vertically in its row), and it
+    installs a NullFormatter on the interior panels so that only the bottom
+    row shows x tick labels and only the left column shows y tick labels.
+
+    So the only thing left to do is swap corner's default ScalarFormatter for
+    ours on exactly the panels that actually display labels -- the bottom row
+    and the left column.  Touching the interior panels would overwrite their
+    NullFormatter and make the hidden labels reappear.
+    """
     axes = np.asarray(fig.axes, dtype=object)
     if axes.size != ndim * ndim:
         return
     axes = axes.reshape((ndim, ndim))
     formatter = FuncFormatter(_tex_cap_mcmc_tick)
-    for row in range(ndim):
-        for col in range(ndim):
-            ax = axes[row, col]
-            if row >= col:
-                ax.xaxis.set_major_formatter(formatter)
-                ax.xaxis.get_offset_text().set_visible(False)
-            if row > col:
-                ax.yaxis.set_major_formatter(formatter)
-                ax.yaxis.get_offset_text().set_visible(False)
+    for col in range(ndim):
+        ax = axes[ndim - 1, col]
+        ax.xaxis.set_major_formatter(formatter)
+        ax.xaxis.get_offset_text().set_visible(False)
+    for row in range(1, ndim):
+        ax = axes[row, 0]
+        ax.yaxis.set_major_formatter(formatter)
+        ax.yaxis.get_offset_text().set_visible(False)
 
 def _apply_scientific_y_ticks(ax, nbins=CAP_Y_TICK_NBINS):
     """Apply scaled CAP y-axis tick labels.
@@ -1170,6 +1273,16 @@ def _set_cap_ylabel(ax, label, fontsize):
     ax.set_ylabel(label, fontsize=fontsize)
     ax.yaxis.set_label_coords(CAP_YLABEL_X, CAP_YLABEL_Y)
 
+
+def _legend_label_with_reduced_chi2(base_label, mcmc):
+    """Legend label optionally augmented with reduced chi^2."""
+    if not isinstance(mcmc, dict):
+        return base_label
+    chi2 = mcmc.get('chi2_gof')
+    dof = mcmc.get('dof_gof')
+    if np.isfinite(chi2) and np.isfinite(dof) and dof > 0:
+        return rf'{base_label} ($\chi^2_\nu = {chi2 / dof:.3f}$)'
+    return base_label
 def _mass_bin_label(mass_lo, mass_hi):
     return MASS_BIN_LABEL_TEMPLATE.format(mass_lo=mass_lo, mass_hi=mass_hi)
 
@@ -1391,7 +1504,13 @@ def plot_summary_sector_posterior_curves(all_bin_results, out_dir):
     """
     if len(all_bin_results) == 0:
         return
-    fig, axes = plt.subplots(1, len(MASS_BINS), figsize=(CAP_FIG_WIDTH_PER_COL * len(MASS_BINS), CAP_FIG_HEIGHT), squeeze=False, sharey=True)
+    fig, axes = plt.subplots(
+        1,
+        len(MASS_BINS),
+        figsize=(CAP_FIG_WIDTH_PER_COL * len(MASS_BINS), CAP_FIG_HEIGHT),
+        squeeze=False,
+        sharey=True,
+    )
     axes = axes.ravel()
     fig.subplots_adjust(left=CAP_LEFT, right=CAP_RIGHT, bottom=CAP_BOTTOM, top=CAP_SECTOR_TOP, wspace=CAP_WSPACE)
     theta = np.asarray(CAP_RADII_ARCMIN, dtype=np.float64)
@@ -1407,15 +1526,39 @@ def plot_summary_sector_posterior_curves(all_bin_results, out_dir):
         maj_s = _cap_to_plot_units(res.get('cap_major_std'))
         min_m = _cap_to_plot_units(res.get('cap_minor_mean'))
         min_s = _cap_to_plot_units(res.get('cap_minor_std'))
+        maj_fit = res.get('mcmc_major')
+        min_fit = res.get('mcmc_minor')
         if maj_m is None or maj_s is None or min_m is None or (min_s is None):
             ax.text(0.5, 0.5, CAP_NO_SECTOR_DATA_LABEL, transform=ax.transAxes, ha='center', va='center', color='0.35')
         else:
             ylim_pairs.extend([(maj_m, maj_s), (min_m, min_s)])
-            maj_container = ax.errorbar(theta - 0.04, maj_m, yerr=maj_s, fmt='P', linestyle='none', capsize=CAP_ERROR_CAPSIZE, lw=CAP_ERROR_LW, ms=CAP_ERROR_MARKER_SIZE, label=CAP_MAJOR_SECTOR_LABEL)
-            min_container = ax.errorbar(theta + 0.04, min_m, yerr=min_s, fmt='X', linestyle='none', capsize=CAP_ERROR_CAPSIZE, lw=CAP_ERROR_LW, ms=CAP_ERROR_MARKER_SIZE, label=CAP_MINOR_SECTOR_LABEL)
+            maj_label = _legend_label_with_reduced_chi2(CAP_MAJOR_SECTOR_LABEL, maj_fit)
+            min_label = _legend_label_with_reduced_chi2(CAP_MINOR_SECTOR_LABEL, min_fit)
+            maj_container = ax.errorbar(
+                theta - 0.04,
+                maj_m,
+                yerr=maj_s,
+                fmt='P',
+                linestyle='none',
+                capsize=CAP_ERROR_CAPSIZE,
+                lw=CAP_ERROR_LW,
+                ms=CAP_ERROR_MARKER_SIZE,
+                label=maj_label,
+            )
+            min_container = ax.errorbar(
+                theta + 0.04,
+                min_m,
+                yerr=min_s,
+                fmt='X',
+                linestyle='none',
+                capsize=CAP_ERROR_CAPSIZE,
+                lw=CAP_ERROR_LW,
+                ms=CAP_ERROR_MARKER_SIZE,
+                label=min_label,
+            )
             maj_color = maj_container.lines[0].get_color()
             min_color = min_container.lines[0].get_color()
-            for mcmc, color in [(res.get('mcmc_major'), maj_color), (res.get('mcmc_minor'), min_color)]:
+            for mcmc, color in [(maj_fit, maj_color), (min_fit, min_color)]:
                 if not isinstance(mcmc, dict) or mcmc.get('samples') is None:
                     continue
                 X_line = _design_matrix_polynomial(theta_line, mcmc['degree'])
@@ -1495,15 +1638,13 @@ def _cap_shape_fit_model_description(degree=CAP_SHAPE_FIT_DEGREE):
     return f'degree-{degree} polynomial fit'
 
 def _design_matrix_polynomial(theta, degree):
+    """Design matrix for a polynomial in theta.
+
+    np.vander(theta, degree + 1) already returns the columns in exactly the
+    order this pipeline wants -- [theta^degree, ..., theta, 1] -- with the
+    constant/offset term last.
     """
-    Design matrix for a polynomial-in-theta model, ordered
-    [theta^degree, theta^(degree-1), ..., theta^1, 1].
-    The LAST column is always the constant/offset term.
-    """
-    theta = np.asarray(theta, dtype=np.float64)
-    cols = [theta ** p for p in range(degree, 0, -1)]
-    cols.append(np.ones_like(theta))
-    return np.column_stack(cols)
+    return np.vander(np.asarray(theta, dtype=np.float64), degree + 1)
 
 def _cap_coefficient_names(degree=CAP_SHAPE_FIT_DEGREE):
     """Plain-text coefficient names in design-matrix order."""
@@ -1540,8 +1681,8 @@ def run_quadratic_mcmc(cap_mean, cap_cov, theta=None, degree=CAP_SHAPE_FIT_DEGRE
     uncertainties below should not be trusted.
     """
     n_params = degree + 1
-    empty_summary = {'q16': np.full(n_params, np.nan), 'median': np.full(n_params, np.nan), 'q84': np.full(n_params, np.nan), 'err_minus': np.full(n_params, np.nan), 'err_plus': np.full(n_params, np.nan)}
-    out = {'degree': degree, 'parameter_names': _cap_coefficient_names(degree), 'beta_ml': np.full(n_params, np.nan), 'samples': None, 'summary': empty_summary, 'param_corr': np.full((n_params, n_params), np.nan), 'acceptance_fraction': np.nan, 'autocorr_time': np.full(n_params, np.nan), 'n_posterior_samples': 0, 'chi2_gof': np.nan, 'dof_gof': 0, 'pte_gof': np.nan}
+    nan_vec = np.full(n_params, np.nan)
+    out = {'degree': degree, 'parameter_names': _cap_coefficient_names(degree), 'beta_ml': nan_vec.copy(), 'samples': None, 'summary': {k: nan_vec.copy() for k in ('q16', 'median', 'q84', 'err_minus', 'err_plus')}, 'param_corr': np.full((n_params, n_params), np.nan), 'acceptance_fraction': np.nan, 'autocorr_time': nan_vec.copy(), 'n_posterior_samples': 0, 'chi2_gof': np.nan, 'dof_gof': 0, 'pte_gof': np.nan}
     if not RUN_CAP_MCMC:
         return out
     if emcee is None or corner is None:
@@ -1561,15 +1702,17 @@ def run_quadratic_mcmc(cap_mean, cap_cov, theta=None, degree=CAP_SHAPE_FIT_DEGRE
         raise ValueError('CAP_MCMC_THIN must be positive.')
     X = _design_matrix_polynomial(theta, degree)
     cov_inv = np.linalg.inv(cov)
-    fisher = X.T @ cov_inv @ X
-    beta_ml = np.linalg.solve(fisher, X.T @ cov_inv @ y)
+    # Closed-form ML/weighted-least-squares solution and its parameter
+    # covariance (the inverse Fisher matrix), both from a single inverse.
+    beta_cov = np.linalg.inv(X.T @ cov_inv @ X)
+    beta_ml = beta_cov @ (X.T @ cov_inv @ y)
     out['beta_ml'] = beta_ml
     resid_ml = y - X @ beta_ml
     out['chi2_gof'] = float(resid_ml @ cov_inv @ resid_ml)
     out['dof_gof'] = int(y.size - n_params)
     if out['dof_gof'] > 0:
         out['pte_gof'] = float(scipy_stats.chi2.sf(out['chi2_gof'], df=out['dof_gof']))
-    beta_sigma = np.sqrt(np.clip(np.diag(np.linalg.inv(fisher)), 0.0, None))
+    beta_sigma = np.sqrt(np.clip(np.diag(beta_cov), 0.0, None))
     beta_sigma = np.where(beta_sigma > 0.0, beta_sigma, np.maximum(np.abs(beta_ml), np.finfo(np.float64).eps))
 
     def log_probability(beta):
@@ -1641,45 +1784,133 @@ def print_cap_mcmc_fit_tables(all_bin_results):
             print('=' * 88)
 
 def plot_cap_mcmc_corner_pdf(all_bin_results, out_dir):
-    """Write one multi-page PDF: major- and minor-sector corner plots per
-    mass bin, with the ML solution marked as the truth lines."""
+    """Write one overlaid major/minor-sector corner plot per mass bin, with the
+    ML solutions marked as truth lines for both sectors. Returns the list of
+    PDF paths written.
+    """
     if not RUN_CAP_MCMC:
-        return
+        return []
     if corner is None:
         raise ImportError('corner is required when RUN_CAP_MCMC=True')
-    path = os.path.join(out_dir, 'summary_oriented_sector_mcmc_corner_all_bins.pdf')
-    wrote_page = False
-    with PdfPages(path) as pdf:
-        for i_bin, bin_result in enumerate(all_bin_results):
-            mass_lo = bin_result.get('mass_lo', MASS_BINS[i_bin][0])
-            mass_hi = bin_result.get('mass_hi', MASS_BINS[i_bin][1])
-            full = bin_result.get('full_stack', {})
-            if not isinstance(full, dict):
-                continue
-            for key, sub, sector_word in [('mcmc_major', 'maj', 'Major'), ('mcmc_minor', 'min', 'Minor')]:
-                mcmc = full.get(key)
-                if not isinstance(mcmc, dict) or mcmc.get('samples') is None:
-                    continue
-                names = mcmc['parameter_names']
-                degree = int(mcmc['degree'])
-                labels = [_cap_mcmc_parameter_label(name, sub, degree) for name in names]
-                title = f'{sector_word}-sector posterior, $\\log_{{10}} M_\\ast/M_\\odot\\in({mass_lo:.1f},{mass_hi:.1f}]$'
-                scaled_samples = np.asarray(mcmc['samples'], dtype=np.float64) * CAP_MCMC_DISPLAY_SCALE
-                scaled_truths = np.asarray(mcmc['beta_ml'], dtype=np.float64) * CAP_MCMC_DISPLAY_SCALE
-                fig = corner.corner(scaled_samples, labels=labels, truths=scaled_truths, quantiles=[0.16, 0.5, 0.84], show_titles=True, title_quantiles=[0.16, 0.5, 0.84], title_fmt=f'.{CAP_MCMC_TITLE_DECIMALS}f', bins=35, smooth=1.0, smooth1d=1.0, plot_datapoints=False, fill_contours=True, levels=(0.393, 0.865, 0.989))
-                _format_cap_mcmc_corner_axes(fig, len(names))
-                fig.suptitle(title, fontsize=16, y=0.995)
-                pdf.savefig(fig, bbox_inches='tight', pad_inches=0.05)
-                plt.close(fig)
-                wrote_page = True
-    if wrote_page:
-        print(f'  [summary MCMC corners] {path}')
-    else:
-        try:
-            os.remove(path)
-        except OSError:
-            pass
 
+    written_paths = []
+    major_color = 'C0'
+    minor_color = 'C1'
+
+    for i_bin, bin_result in enumerate(all_bin_results):
+        mass_lo = bin_result.get('mass_lo', MASS_BINS[i_bin][0])
+        mass_hi = bin_result.get('mass_hi', MASS_BINS[i_bin][1])
+        full = bin_result.get('full_stack', {})
+
+        if not isinstance(full, dict):
+            continue
+
+        major = full.get('mcmc_major')
+        minor = full.get('mcmc_minor')
+
+        if not isinstance(major, dict) or major.get('samples') is None:
+            major = None
+        if not isinstance(minor, dict) or minor.get('samples') is None:
+            minor = None
+
+        if major is None and minor is None:
+            continue
+
+        ref = major if major is not None else minor
+        names = ref['parameter_names']
+        degree = int(ref['degree'])
+
+        # Keep the shared axis labels generic so both posteriors use the same axes.
+        labels = [_cap_mcmc_parameter_label(name, 'fit', degree) for name in names]
+
+        title = rf'Major/minor-sector posterior overlay, $\log_{{10}} M_\ast/M_\odot\in({mass_lo:.1f},{mass_hi:.1f}]$'
+
+        fig = None
+        for mcmc, color in [(major, major_color), (minor, minor_color)]:
+            if mcmc is None:
+                continue
+
+            scaled_samples = np.asarray(mcmc['samples'], dtype=np.float64) * CAP_MCMC_DISPLAY_SCALE
+            scaled_truths = np.asarray(mcmc['beta_ml'], dtype=np.float64) * CAP_MCMC_DISPLAY_SCALE
+
+            fig = corner.corner(
+                scaled_samples,
+                fig=fig,
+                labels=labels,
+                truths=scaled_truths,
+                truth_color=color,
+                quantiles=[0.16, 0.5, 0.84],
+                show_titles=False,
+                bins=35,
+                smooth=1.0,
+                smooth1d=1.0,
+                plot_datapoints=False,
+                fill_contours=False,
+                plot_density=False,
+                color=color,
+                hist_kwargs={
+                    'linewidth': 1.8,
+                },
+                levels=(0.393, 0.864),
+            )
+
+        _format_cap_mcmc_corner_axes(fig, len(names))
+
+        major_summary_scaled = None
+        if major is not None:
+            major_summary_scaled = {
+                k: np.asarray(v, dtype=np.float64) * CAP_MCMC_DISPLAY_SCALE
+                for k, v in major['summary'].items()
+            }
+
+        minor_summary_scaled = None
+        if minor is not None:
+            minor_summary_scaled = {
+                k: np.asarray(v, dtype=np.float64) * CAP_MCMC_DISPLAY_SCALE
+                for k, v in minor['summary'].items()
+            }
+
+        _set_cap_mcmc_corner_titles_overlay(
+            fig,
+            major_summary_scaled,
+            minor_summary_scaled,
+            names,
+            degree,
+            fontsize=CAP_MCMC_TITLE_SIZE,
+        )
+
+        legend_handles = []
+        if major is not None:
+            legend_handles.append(
+                Line2D([0], [0], color=major_color, lw=2.0, label=CAP_MAJOR_SECTOR_LABEL)
+            )
+        if minor is not None:
+            legend_handles.append(
+                Line2D([0], [0], color=minor_color, lw=2.0, label=CAP_MINOR_SECTOR_LABEL)
+            )
+
+        if legend_handles:
+            fig.legend(
+                handles=legend_handles,
+                loc='upper right',
+                bbox_to_anchor=(0.98, 1.01),
+                fontsize=CAP_LEGEND_SIZE_SECTOR,
+            )
+
+        fig.suptitle(title, fontsize=CAP_MCMC_SUPTITLE_SIZE, y=1.05)
+
+        mass_lo_tag = f'{mass_lo:.1f}'.replace('.', 'p').replace('-', 'm')
+        mass_hi_tag = f'{mass_hi:.1f}'.replace('.', 'p').replace('-', 'm')
+        fname = f'summary_oriented_sector_mcmc_corner_overlay_bin{i_bin + 1}_{mass_lo_tag}_{mass_hi_tag}.pdf'
+        path = os.path.join(out_dir, fname)
+
+        fig.savefig(path, bbox_inches='tight', pad_inches=0.05, dpi=SAVEFIG_DPI)
+        plt.close(fig)
+        written_paths.append(path)
+        print(f'  [summary MCMC corner overlay] {path}')
+
+    return written_paths
+  
 def build_selection_and_cache():
     """Build the oriented sample without any stellar-age dependency."""
     if RADIO_ONLY and EXCLUDE_RADIO:
@@ -1933,7 +2164,7 @@ def main():
         plot_summary_sector_cap_profiles(all_bin_results, SUMMARY_DIR)
         plot_summary_sector_cap_correlation(all_bin_results, SUMMARY_DIR)
         plot_summary_sector_posterior_curves(all_bin_results, SUMMARY_DIR)
-        plot_cap_mcmc_corner_pdf(all_bin_results, SUMMARY_DIR)
+        corner_pdf_paths = plot_cap_mcmc_corner_pdf(all_bin_results, SUMMARY_DIR)
         plot_summary_radio_full_stacks(all_bin_results, SUMMARY_DIR, stack_norm)
         plot_summary_oriented_selected_ba_histograms(all_bin_results, h5f, SUMMARY_DIR)
         print_cap_mcmc_fit_tables(all_bin_results)
@@ -1942,6 +2173,8 @@ def main():
     print('\nDone. PDFs written by this pipeline:')
     for pdf_name in ORIENTED_PDF_NAMES:
         print(f'  {pdf_name}')
+    for pdf_path in corner_pdf_paths:
+        print(f'  {os.path.basename(pdf_path)}')
 
 
 if __name__ == "__main__":
