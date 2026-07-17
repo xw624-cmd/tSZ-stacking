@@ -124,7 +124,7 @@ N_BOOT = 10000
 
 SEED = 42
 
-CAP_SHAPE_FIT_MODEL = 'quadratic'
+CAP_SHAPE_FIT_MODEL = 'linear'
 
 _CAP_SHAPE_FIT_DEGREES = {'linear': 1, 'quadratic': 2}
 
@@ -447,6 +447,22 @@ if CAP_SHAPE_FIT_MODEL not in _CAP_SHAPE_FIT_DEGREES:
         "CAP_SHAPE_FIT_MODEL must be either 'linear' or 'quadratic'; "
         f"got {CAP_SHAPE_FIT_MODEL!r}."
     )
+    
+    
+# --- Combined corner-overlay page (not strict A4 — width fixed, height auto-cropped) ---
+CAP_MCMC_A4_WIDTH_IN = 8.27
+CAP_MCMC_A4_HEIGHT_IN = 9.0            # scratch height; bbox_inches='tight' crops the real output
+CAP_MCMC_A4_NCOLS = 2                   # 3 bins -> 2x2 grid, one empty cell
+CAP_MCMC_A4_WSPACE = 0.04
+CAP_MCMC_A4_HSPACE = -0.06              # negative pulls rows together, closing the row gap
+CAP_MCMC_A4_CORNER_WHSPACE = 0.06
+CAP_MCMC_A4_TITLE_SIZE = 7
+CAP_MCMC_A4_MASSLABEL_SIZE = 13
+CAP_MCMC_A4_MASSLABEL_X = 0.82           # moved right from 0.70
+CAP_MCMC_A4_MASSLABEL_Y = 0.82
+CAP_MCMC_A4_LEGEND_CELL = 1              # flattened row-major grid index -> top-right in a 2x2
+CAP_MCMC_A4_SUPTITLE = '{\\rm Oriented-stack\\ CAP\\ Posterior\\ Overlays}'
+CAP_MCMC_A4_SUPTITLE_Y = 1.005
 
 
 # ============================================================
@@ -542,6 +558,49 @@ def _cap_to_plot_units(values):
 def _cap_plot_axis_label():
     """CAP axis label for the y arcmin^2 convention."""
     return CAP_Y_LABEL
+
+def print_cap_profile_mean_sd_table(mass_lo, mass_hi, major_mean, major_std, minor_mean, minor_std):
+    """Print the nine plotted major/minor CAP means and bootstrap SDs.
+
+    Values are multiplied by ``DISPLAY_Y_SCALE`` so the numbers use the same
+    10^{-6} convention shown on the CAP-profile plot axis.
+    """
+    arrays = [major_mean, major_std, minor_mean, minor_std]
+    if any(values is None for values in arrays):
+        print('    [CAP profile table] unavailable: one or more profile arrays are missing')
+        return
+
+    major_mean, major_std, minor_mean, minor_std = [
+        np.asarray(values, dtype=np.float64) for values in arrays
+    ]
+    n_ap = len(CAP_RADII_ARCMIN)
+    if any(values.shape != (n_ap,) for values in (major_mean, major_std, minor_mean, minor_std)):
+        shapes = [values.shape for values in (major_mean, major_std, minor_mean, minor_std)]
+        raise ValueError(
+            f'CAP profile arrays must each have shape ({n_ap},); got {shapes}'
+        )
+
+    scale = float(DISPLAY_Y_SCALE)
+    print(
+        f'\n    Plotted CAP mean and bootstrap SD: '
+        f'logM ({mass_lo:.1f}, {mass_hi:.1f}] '
+        f'[values in 10^{{-6}} y arcmin^2]'
+    )
+    header = (
+        f"    {'theta [arcmin]':>14}"
+        f"{'major mean':>16}{'major SD':>16}"
+        f"{'minor mean':>16}{'minor SD':>16}"
+    )
+    print(header)
+    print('    ' + '-' * (len(header) - 4))
+    for radius, maj_m, maj_s, min_m, min_s in zip(
+        CAP_RADII_ARCMIN, major_mean, major_std, minor_mean, minor_std
+    ):
+        print(
+            f'{radius:18.2f}'
+            f'{maj_m * scale:16.8f}{maj_s * scale:16.8f}'
+            f'{min_m * scale:16.8f}{min_s * scale:16.8f}'
+        )
 
 def _cap_pixel_area_arcmin2(pixscale_arcmin):
     """Projected local cutout pixel area in arcmin^2."""
@@ -1784,58 +1843,79 @@ def print_cap_mcmc_fit_tables(all_bin_results):
             print('=' * 88)
 
 def plot_cap_mcmc_corner_pdf(all_bin_results, out_dir):
-    """Write one overlaid major/minor-sector corner plot per mass bin, with the
-    ML solutions marked as truth lines for both sectors. Returns the list of
-    PDF paths written.
+    """Write ALL mass-bin overlaid major/minor corner plots onto ONE page.
+
+    The per-bin overlaid corners are laid out as a grid of matplotlib
+    subfigures (two columns by default). Each panel is forced square so the
+    posterior contours show correlation rather than the cell aspect ratio.
+    Any leftover cell (e.g. the 4th slot in a 3-bin, 2x2 grid) holds the
+    shared legend at CAP_MCMC_A4_LEGEND_CELL. The page is not literal A4:
+    width is fixed but height is generous scratch space, cropped tightly by
+    bbox_inches='tight' at save time. Returns a one-element list with the
+    combined PDF path.
     """
     if not RUN_CAP_MCMC:
         return []
     if corner is None:
         raise ImportError('corner is required when RUN_CAP_MCMC=True')
 
-    written_paths = []
     major_color = 'C0'
     minor_color = 'C1'
 
+    plottable = []
     for i_bin, bin_result in enumerate(all_bin_results):
-        mass_lo = bin_result.get('mass_lo', MASS_BINS[i_bin][0])
-        mass_hi = bin_result.get('mass_hi', MASS_BINS[i_bin][1])
         full = bin_result.get('full_stack', {})
-
         if not isinstance(full, dict):
             continue
-
         major = full.get('mcmc_major')
         minor = full.get('mcmc_minor')
-
         if not isinstance(major, dict) or major.get('samples') is None:
             major = None
         if not isinstance(minor, dict) or minor.get('samples') is None:
             minor = None
-
         if major is None and minor is None:
             continue
+        mass_lo = bin_result.get('mass_lo', MASS_BINS[i_bin][0])
+        mass_hi = bin_result.get('mass_hi', MASS_BINS[i_bin][1])
+        plottable.append((mass_lo, mass_hi, major, minor))
 
+    if not plottable:
+        return []
+
+    n_bins = len(plottable)
+    ncols = 1 if n_bins == 1 else CAP_MCMC_A4_NCOLS
+    nrows = -(-n_bins // ncols)  # ceil division
+
+    n_cells = nrows * ncols
+    legend_idx = CAP_MCMC_A4_LEGEND_CELL if n_cells > n_bins else None
+    bin_cell_idx = [i for i in range(n_cells) if i != legend_idx][:n_bins]
+
+    fig = plt.figure(figsize=(CAP_MCMC_A4_WIDTH_IN, CAP_MCMC_A4_HEIGHT_IN))
+    grid = fig.subfigures(nrows, ncols, wspace=CAP_MCMC_A4_WSPACE, hspace=CAP_MCMC_A4_HSPACE)
+    cells = np.atleast_1d(grid).ravel()
+
+    for cell_i, (mass_lo, mass_hi, major, minor) in zip(bin_cell_idx, plottable):
+        cell = cells[cell_i]
         ref = major if major is not None else minor
         names = ref['parameter_names']
         degree = int(ref['degree'])
-
-        # Keep the shared axis labels generic so both posteriors use the same axes.
+        ndim = len(names)
         labels = [_cap_mcmc_parameter_label(name, 'fit', degree) for name in names]
 
-        title = rf'Major/minor-sector posterior overlay, $\log_{{10}} M_\ast/M_\odot\in({mass_lo:.1f},{mass_hi:.1f}]$'
+        cell.subplots(
+            ndim, ndim,
+            gridspec_kw=dict(wspace=CAP_MCMC_A4_CORNER_WHSPACE,
+                             hspace=CAP_MCMC_A4_CORNER_WHSPACE),
+        )
 
-        fig = None
         for mcmc, color in [(major, major_color), (minor, minor_color)]:
             if mcmc is None:
                 continue
-
             scaled_samples = np.asarray(mcmc['samples'], dtype=np.float64) * CAP_MCMC_DISPLAY_SCALE
             scaled_truths = np.asarray(mcmc['beta_ml'], dtype=np.float64) * CAP_MCMC_DISPLAY_SCALE
-
-            fig = corner.corner(
+            corner.corner(
                 scaled_samples,
-                fig=fig,
+                fig=cell,
                 labels=labels,
                 truths=scaled_truths,
                 truth_color=color,
@@ -1848,13 +1928,11 @@ def plot_cap_mcmc_corner_pdf(all_bin_results, out_dir):
                 fill_contours=False,
                 plot_density=False,
                 color=color,
-                hist_kwargs={
-                    'linewidth': 1.8,
-                },
+                hist_kwargs={'linewidth': 1.8},
                 levels=(0.393, 0.864),
             )
 
-        _format_cap_mcmc_corner_axes(fig, len(names))
+        _format_cap_mcmc_corner_axes(cell, ndim)
 
         major_summary_scaled = None
         if major is not None:
@@ -1862,7 +1940,6 @@ def plot_cap_mcmc_corner_pdf(all_bin_results, out_dir):
                 k: np.asarray(v, dtype=np.float64) * CAP_MCMC_DISPLAY_SCALE
                 for k, v in major['summary'].items()
             }
-
         minor_summary_scaled = None
         if minor is not None:
             minor_summary_scaled = {
@@ -1871,46 +1948,53 @@ def plot_cap_mcmc_corner_pdf(all_bin_results, out_dir):
             }
 
         _set_cap_mcmc_corner_titles_overlay(
-            fig,
+            cell,
             major_summary_scaled,
             minor_summary_scaled,
             names,
             degree,
-            fontsize=CAP_MCMC_TITLE_SIZE,
+            fontsize=CAP_MCMC_A4_TITLE_SIZE,
         )
 
-        legend_handles = []
-        if major is not None:
-            legend_handles.append(
-                Line2D([0], [0], color=major_color, lw=2.0, label=CAP_MAJOR_SECTOR_LABEL)
-            )
-        if minor is not None:
-            legend_handles.append(
-                Line2D([0], [0], color=minor_color, lw=2.0, label=CAP_MINOR_SECTOR_LABEL)
-            )
+        for ax in cell.axes:
+            ax.set_box_aspect(1)
 
-        if legend_handles:
-            fig.legend(
-                handles=legend_handles,
-                loc='upper right',
-                bbox_to_anchor=(0.98, 1.01),
-                fontsize=CAP_LEGEND_SIZE_SECTOR,
-            )
+        cell.text(
+            CAP_MCMC_A4_MASSLABEL_X,
+            CAP_MCMC_A4_MASSLABEL_Y,
+            '$\\log_{10}\\!\\left(M_\\ast/M_\\odot\\right)$\n'
+            + f'$\\in({mass_lo:.1f},{mass_hi:.1f}]$',
+            ha='center',
+            va='center',
+            fontsize=CAP_MCMC_A4_MASSLABEL_SIZE,
+        )
 
-        fig.suptitle(title, fontsize=CAP_MCMC_SUPTITLE_SIZE, y=1.05)
+    legend_handles = [
+        Line2D([0], [0], color=major_color, lw=2.0, label=CAP_MAJOR_SECTOR_LABEL),
+        Line2D([0], [0], color=minor_color, lw=2.0, label=CAP_MINOR_SECTOR_LABEL),
+    ]
+    if legend_idx is not None:
+        cells[legend_idx].legend(
+            handles=legend_handles,
+            loc='center',
+            fontsize=CAP_LEGEND_SIZE_SECTOR,
+            frameon=True,
+        )
+    else:
+        fig.legend(
+            handles=legend_handles,
+            loc='upper right',
+            fontsize=CAP_LEGEND_SIZE_SECTOR,
+            frameon=True,
+        )
+    fig.suptitle(CAP_MCMC_A4_SUPTITLE, fontsize=CAP_MCMC_SUPTITLE_SIZE, y=CAP_MCMC_A4_SUPTITLE_Y)
 
-        mass_lo_tag = f'{mass_lo:.1f}'.replace('.', 'p').replace('-', 'm')
-        mass_hi_tag = f'{mass_hi:.1f}'.replace('.', 'p').replace('-', 'm')
-        fname = f'summary_oriented_sector_mcmc_corner_overlay_bin{i_bin + 1}_{mass_lo_tag}_{mass_hi_tag}.pdf'
-        path = os.path.join(out_dir, fname)
-
-        fig.savefig(path, bbox_inches='tight', pad_inches=0.05, dpi=SAVEFIG_DPI)
-        plt.close(fig)
-        written_paths.append(path)
-        print(f'  [summary MCMC corner overlay] {path}')
-
-    return written_paths
-  
+    path = os.path.join(out_dir, 'summary_oriented_sector_mcmc_corner_overlay_A4.pdf')
+    fig.savefig(path, dpi=SAVEFIG_DPI, bbox_inches='tight')
+    plt.close(fig)
+    print(f'  [summary MCMC corner overlay] {path}')
+    return [path]
+     
 def build_selection_and_cache():
     """Build the oriented sample without any stellar-age dependency."""
     if RADIO_ONLY and EXCLUDE_RADIO:
@@ -1985,6 +2069,18 @@ def build_selection_and_cache():
     stages.append((f'{stage_number}. SDSS DR17 photo shape and b/a cut', cum_photo))
     stage_number += 1
     stages.append((f'{stage_number}. ACT-Planck map footprint', cum_map))
+    if RADIO_ONLY:
+        stage_number += 1
+        stages.append((
+            f'{stage_number}. Require FIRST radio match (<= {FIRST_MATCH_ARCSEC:.0f} arcsec)',
+            base_sel,
+        ))
+    elif EXCLUDE_RADIO:
+        stage_number += 1
+        stages.append((
+            f'{stage_number}. Exclude FIRST radio matches (<= {FIRST_MATCH_ARCSEC:.0f} arcsec)',
+            base_sel,
+        ))
     print_cumulative_cut_table(stages, logm_ff, final_label='FINAL oriented sample')
     print('\nFinal oriented samples (denominator: Firefly CLASS=GALAXY):')
     print(f'  main selected galaxies: {base_sel.sum():,} / {n_firefly_galaxies:,}')
@@ -2057,7 +2153,7 @@ def add_full_stack_results(h5f, bin_result, mass_mask):
     """Compute full mass bin stack and CAP quantities."""
     mass_lo = bin_result.get('mass_lo', np.nan)
     mass_hi = bin_result.get('mass_hi', np.nan)
-    result = stack_from_cache(h5f, mass_mask, label=f'full non-radio stack logM ({mass_lo:.1f}, {mass_hi:.1f}]')
+    result = stack_from_cache(h5f, mass_mask, label=f'main selected stack logM ({mass_lo:.1f}, {mass_hi:.1f}]')
     if result['n_success'] == 0:
         bin_result['full_stack'] = {'n_success': 0}
         return
@@ -2065,6 +2161,14 @@ def add_full_stack_results(h5f, bin_result, mass_mask):
     cap_maj_m, cap_maj_s, cap_maj_cov, _ = mean_profile_and_covariance(result['cap_major_values'], seed=SEED)
     cap_min_m, cap_min_s, cap_min_cov, _ = mean_profile_and_covariance(result['cap_minor_values'], seed=SEED)
     print(f'    full CAP profiles from {n_cap:,} galaxies')
+    print_cap_profile_mean_sd_table(
+        mass_lo,
+        mass_hi,
+        cap_maj_m,
+        cap_maj_s,
+        cap_min_m,
+        cap_min_s,
+    )
     bin_result['full_stack'] = {'n_success': result['n_success'], 'stack_unori': result['stack_unori'], 'stack_ori': result['stack_ori'], 'pixscale': result['pixscale'], 'cap_mean': cap_m, 'cap_std': cap_s, 'cap_cov': cap_cov, 'cap_major_mean': cap_maj_m, 'cap_major_std': cap_maj_s, 'cap_major_cov': cap_maj_cov, 'cap_minor_mean': cap_min_m, 'cap_minor_std': cap_min_s, 'cap_minor_cov': cap_min_cov, 'effective_mask': result['effective_mask']}
     if RUN_CAP_MCMC:
         full = bin_result['full_stack']
@@ -2132,6 +2236,12 @@ def main():
     print('  photoPosPlate cross-match: ON')
     print(f'  Axis-ratio cut: 0 < b/a < {BA_MAX}')
     print(f"  CAP MCMC: {('ON' if RUN_CAP_MCMC else 'OFF')}")
+    if RADIO_ONLY:
+        print(f'  Radio selection: REQUIRE FIRST match within {FIRST_MATCH_ARCSEC:.0f} arcsec')
+    elif EXCLUDE_RADIO:
+        print(f'  Radio selection: EXCLUDE FIRST matches within {FIRST_MATCH_ARCSEC:.0f} arcsec')
+    else:
+        print('  Radio selection: no cut')
     print('=' * 70)
     h5f, base_fits_idx, radio_fits_idx = build_selection_and_cache()
     try:
