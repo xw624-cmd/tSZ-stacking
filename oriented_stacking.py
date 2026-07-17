@@ -2220,12 +2220,13 @@ def plot_summary_oriented_selected_ba_histograms(all_bin_results, h5f, out_dir):
                     median_ba,
                     linestyle=HIST_MEDIAN_LINESTYLE,
                     linewidth=HIST_MEDIAN_LINEWIDTH,
+                    color='black',
                     label=rf'$\mathrm{{Median}}:\ b/a = {median_ba:.3f}$',
                 )
                 ax.legend(
                     loc='upper left',
                     fontsize=HIST_MEDIAN_LABEL_SIZE,
-                    frameon=False,
+                    frameon=True,
                 )
         ax.set_title(_mass_bin_label(mass_lo, mass_hi), fontsize=HIST_PANEL_TITLE_SIZE, pad=HIST_PANEL_TITLE_PAD)
         ax.tick_params(labelsize=HIST_TICK_LABEL_SIZE)
