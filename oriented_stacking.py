@@ -366,6 +366,12 @@ HIST_YLABEL_Y = 0.57
 
 HIST_LINEWIDTH = 1.8
 
+HIST_MEDIAN_LINEWIDTH = 1.8
+
+HIST_MEDIAN_LINESTYLE = '--'
+
+HIST_MEDIAN_LABEL_SIZE = 14
+
 CAP_CORR_CMAP = 'YlOrRd'
 
 CAP_CORR_VMIN = 0.0
@@ -2209,6 +2215,18 @@ def plot_summary_oriented_selected_ba_histograms(all_bin_results, h5f, out_dir):
             if len(x) > 0:
                 weights = np.ones_like(x, dtype=np.float64) / len(x)
                 ax.hist(x, bins=bins, weights=weights, histtype='step', linewidth=HIST_LINEWIDTH)
+                median_ba = float(np.median(x))
+                ax.axvline(
+                    median_ba,
+                    linestyle=HIST_MEDIAN_LINESTYLE,
+                    linewidth=HIST_MEDIAN_LINEWIDTH,
+                    label=rf'$\mathrm{{Median}}:\ b/a = {median_ba:.3f}$',
+                )
+                ax.legend(
+                    loc='upper left',
+                    fontsize=HIST_MEDIAN_LABEL_SIZE,
+                    frameon=False,
+                )
         ax.set_title(_mass_bin_label(mass_lo, mass_hi), fontsize=HIST_PANEL_TITLE_SIZE, pad=HIST_PANEL_TITLE_PAD)
         ax.tick_params(labelsize=HIST_TICK_LABEL_SIZE)
         ax.set_xlabel(HIST_BA_X_LABEL, fontsize=HIST_AXIS_LABEL_SIZE)
