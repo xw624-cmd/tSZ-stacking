@@ -1,130 +1,343 @@
 from pathlib import Path
-import numpy as np
+
 import matplotlib.pyplot as plt
-from matplotlib.patches import Ellipse, Rectangle, Polygon
+import matplotlib.transforms as transforms
+import numpy as np
+from matplotlib.patches import Ellipse, Polygon, Rectangle
+
 
 # ---------------------------------------------------------------------
-# Reconstructed version of the "Unoriented / Oriented Stacking" figure.
-# The coordinates are in pixels so that the output closely matches the
-# original 917 x 933 PNG.
+# Reconstructed "Unoriented / Oriented Stacking" schematic.
+#
+# The figure is initially drawn using pixel-like coordinates, then cropped
+# tightly around all visible objects when saved.
 # ---------------------------------------------------------------------
 
-FIG_W, FIG_H = 917, 933
+FIG_W = 917
+FIG_H = 933
 DPI = 100
 
-fig = plt.figure(figsize=(FIG_W / DPI, FIG_H / DPI), dpi=DPI, facecolor="white")
+fig = plt.figure(
+    figsize=(FIG_W / DPI, FIG_H / DPI),
+    dpi=DPI,
+    facecolor="white",
+)
+
 ax = fig.add_axes([0, 0, 1, 1])
+
+# Use image-style coordinates, where y increases downward.
 ax.set_xlim(0, FIG_W)
-ax.set_ylim(FIG_H, 0)  # Image-like coordinates: y increases downward
+ax.set_ylim(FIG_H, 0)
 ax.axis("off")
 
+
+# ---------------------------------------------------------------------
 # Styling
-face = "#90D5FF"
-edge = "#4D6DAA"
-panel_edge = "#808080"
+# ---------------------------------------------------------------------
+
+face_color = "#90D5FF"
+edge_color = "#4D6DAA"
+panel_edge_color = "#808080"
 
 source_alpha = 0.95
 stack_alpha = 0.28
-ellipse_lw = 1.8
+ellipse_linewidth = 1.8
 
+
+# ---------------------------------------------------------------------
 # Panel outlines
-ax.add_patch(Rectangle((67, 77), 783, 335, fill=False,
-                       edgecolor=panel_edge, linewidth=2.0))
-ax.add_patch(Rectangle((67, 502), 783, 336, fill=False,
-                       edgecolor=panel_edge, linewidth=2.0))
+# ---------------------------------------------------------------------
 
-# Titles
-title_kw = dict(
-    ha="center",
-    va="center",
-    fontsize=40,
-    fontweight="bold",
-    fontfamily="DejaVu Sans",
-    color="black",
+ax.add_patch(
+    Rectangle(
+        (67, 77),
+        783,
+        335,
+        fill=False,
+        edgecolor=panel_edge_color,
+        linewidth=2.0,
+    )
 )
-ax.text(458.5, 39, "Unoriented Stacking", **title_kw)
-ax.text(458.5, 465, "Oriented Stacking", **title_kw)
 
-# Five galaxies: centers and dimensions reconstructed from the PNG
-centers_top = np.array([
-    [113.9, 163.5],
-    [301.8, 153.4],
-    [207.9, 220.4],
-    [278.3, 307.5],
-    [199.9, 357.8],
-])
+ax.add_patch(
+    Rectangle(
+        (67, 502),
+        783,
+        336,
+        fill=False,
+        edgecolor=panel_edge_color,
+        linewidth=2.0,
+    )
+)
+
+
+# ---------------------------------------------------------------------
+# Titles
+# ---------------------------------------------------------------------
+
+title_style = {
+    "ha": "center",
+    "va": "center",
+    "fontsize": 40,
+    "fontweight": "bold",
+    "fontfamily": "DejaVu Sans",
+    "color": "black",
+}
+
+ax.text(
+    458.5,
+    39,
+    "Unoriented Stacking",
+    **title_style,
+)
+
+ax.text(
+    458.5,
+    465,
+    "Oriented Stacking",
+    **title_style,
+)
+
+
+# ---------------------------------------------------------------------
+# Galaxy positions and shapes
+# ---------------------------------------------------------------------
+
+centers_top = np.array(
+    [
+        [113.9, 163.5],
+        [301.8, 153.4],
+        [207.9, 220.4],
+        [278.3, 307.5],
+        [199.9, 357.8],
+    ]
+)
 
 panel_shift = 425.6
+
 centers_bottom = centers_top + np.array([0.0, panel_shift])
 
-major = np.array([66.2, 70.1, 77.0, 68.7, 78.8])
-minor = np.array([34.5, 34.4, 36.2, 33.3, 37.2])
+major_axes = np.array([66.2, 70.1, 77.0, 68.7, 78.8])
+minor_axes = np.array([34.5, 34.4, 36.2, 33.3, 37.2])
 
-# Matplotlib angles; positive angles look counterclockwise in the final figure.
+# Matplotlib ellipse angles are measured counterclockwise.
 angles_unoriented = np.array([28.4, 40.9, -35.7, 62.8, -18.4])
 angles_oriented = np.full(5, 90.0)
 
+
 def add_galaxies(centers, angles, alpha):
-    for (x, y), a, b, angle in zip(centers, major, minor, angles):
-        ax.add_patch(Ellipse(
-            (x, y),
-            width=a,
-            height=b,
+    """Add a collection of elliptical galaxy shapes to the axes."""
+
+    for center, major, minor, angle in zip(
+        centers,
+        major_axes,
+        minor_axes,
+        angles,
+    ):
+        x, y = center
+
+        galaxy = Ellipse(
+            xy=(x, y),
+            width=major,
+            height=minor,
             angle=angle,
-            facecolor=face,
-            edgecolor=edge,
-            linewidth=ellipse_lw,
+            facecolor=face_color,
+            edgecolor=edge_color,
+            linewidth=ellipse_linewidth,
             alpha=alpha,
-        ))
+        )
+
+        ax.add_patch(galaxy)
+
 
 # Input galaxies
-add_galaxies(centers_top, angles_unoriented, source_alpha)
-add_galaxies(centers_bottom, angles_oriented, source_alpha)
-
-# Labels
-label_kw = dict(
-    ha="center",
-    va="center",
-    fontsize=20,
-    fontweight="bold",
-    fontfamily="DejaVu Sans",
-    color="black",
-    linespacing=0.90,
+add_galaxies(
+    centers=centers_top,
+    angles=angles_unoriented,
+    alpha=source_alpha,
 )
-ax.text(419, 198, "Stack galaxies\nwithout rotation", **label_kw)
-ax.text(419, 624, "Stack galaxies\nwith rotation", **label_kw)
 
-# Arrows, drawn as polygons for a close match to the original
+add_galaxies(
+    centers=centers_bottom,
+    angles=angles_oriented,
+    alpha=source_alpha,
+)
+
+
+# ---------------------------------------------------------------------
+# Explanatory labels
+# ---------------------------------------------------------------------
+
+label_style = {
+    "ha": "center",
+    "va": "center",
+    "fontsize": 20,
+    "fontweight": "bold",
+    "fontfamily": "DejaVu Sans",
+    "color": "black",
+    "linespacing": 0.90,
+}
+
+ax.text(
+    419,
+    218,
+    "Stack galaxies\nwithout rotation",
+    **label_style,
+)
+
+ax.text(
+    419,
+    644,
+    "Stack galaxies\nwith rotation",
+    **label_style,
+)
+
+
+# ---------------------------------------------------------------------
+# Arrows
+# ---------------------------------------------------------------------
+
 def add_arrow(y_center):
-    vertices = np.array([
-        [407, y_center - 7],
-        [443, y_center - 7],
-        [443, y_center - 14],
-        [471, y_center],
-        [443, y_center + 14],
-        [443, y_center + 7],
-        [407, y_center + 7],
-    ])
-    ax.add_patch(Polygon(vertices, closed=True, facecolor="black", edgecolor="black"))
+    """Add a right-pointing polygon arrow."""
 
-add_arrow(251)
-add_arrow(677)
+    vertices = np.array(
+        [
+            [407, y_center - 7],
+            [443, y_center - 7],
+            [443, y_center - 14],
+            [471, y_center],
+            [443, y_center + 14],
+            [443, y_center + 7],
+            [407, y_center + 7],
+        ]
+    )
 
-# Stacked galaxies. A slight diagonal offset makes all five layers visible.
-stack_x0, stack_y0 = 618.35, 214.39
-dx, dy = 10.31, 8.25
-stack_centers_top = np.array([
-    [stack_x0 + i * dx, stack_y0 + i * dy] for i in range(5)
-])
-stack_centers_bottom = stack_centers_top + np.array([0.0, panel_shift])
+    arrow = Polygon(
+        vertices,
+        closed=True,
+        facecolor="black",
+        edgecolor="black",
+    )
 
-add_galaxies(stack_centers_top, angles_unoriented, stack_alpha)
-add_galaxies(stack_centers_bottom, angles_oriented, stack_alpha)
+    ax.add_patch(arrow)
 
-# Exact-size PNG; PDF is also produced for publication use.
-output_dir = Path(__file__).resolve().parent if "__file__" in globals() else Path("/mnt/data")
-fig.savefig(output_dir / "galaxy_stacking_schematic_reconstructed.png", dpi=DPI,
-            facecolor="white", edgecolor="none")
-fig.savefig(output_dir / "galaxy_stacking_schematic_reconstructed.pdf",
-            facecolor="white", edgecolor="none")
+
+add_arrow(261)
+add_arrow(687)
+
+
+# ---------------------------------------------------------------------
+# Stacked galaxies
+# ---------------------------------------------------------------------
+
+stack_x0 = 618.35
+stack_y0 = 214.39
+
+stack_dx = 10.31
+stack_dy = 8.25
+
+stack_centers_top = np.array(
+    [
+        [
+            stack_x0 + i * stack_dx,
+            stack_y0 + i * stack_dy,
+        ]
+        for i in range(5)
+    ]
+)
+
+stack_centers_bottom = stack_centers_top + np.array(
+    [0.0, panel_shift]
+)
+
+add_galaxies(
+    centers=stack_centers_top,
+    angles=angles_unoriented,
+    alpha=stack_alpha,
+)
+
+add_galaxies(
+    centers=stack_centers_bottom,
+    angles=angles_oriented,
+    alpha=stack_alpha,
+)
+
+
+# ---------------------------------------------------------------------
+# Output directory
+# ---------------------------------------------------------------------
+
+if "__file__" in globals():
+    output_dir = Path(__file__).resolve().parent
+else:
+    output_dir = Path.cwd()
+
+png_path = output_dir / "galaxy_stacking_schematic_reconstructed.png"
+pdf_path = output_dir / "galaxy_stacking_schematic_reconstructed.pdf"
+
+
+# ---------------------------------------------------------------------
+# Calculate a tight bounding box around all visible objects.
+#
+# This avoids the extra whitespace that can remain when using only
+# tight_layout() or bbox_inches="tight".
+# ---------------------------------------------------------------------
+
+fig.canvas.draw()
+renderer = fig.canvas.get_renderer()
+
+visible_artists = [
+    *ax.patches,
+    *ax.texts,
+]
+
+artist_bounding_boxes = [
+    artist.get_window_extent(renderer=renderer)
+    for artist in visible_artists
+    if artist.get_visible()
+]
+
+tight_bbox_pixels = transforms.Bbox.union(artist_bounding_boxes)
+
+# Small border around the outermost visible objects.
+# Set this to 0 for no border at all.
+padding_pixels = 4
+
+tight_bbox_pixels = transforms.Bbox.from_extents(
+    tight_bbox_pixels.x0 - padding_pixels,
+    tight_bbox_pixels.y0 - padding_pixels,
+    tight_bbox_pixels.x1 + padding_pixels,
+    tight_bbox_pixels.y1 + padding_pixels,
+)
+
+# savefig expects the bounding box in inches, not pixels.
+tight_bbox_inches = tight_bbox_pixels.transformed(
+    fig.dpi_scale_trans.inverted()
+)
+
+
+# ---------------------------------------------------------------------
+# Save tightly cropped PNG and PDF files
+# ---------------------------------------------------------------------
+
+fig.savefig(
+    png_path,
+    dpi=DPI,
+    facecolor="white",
+    edgecolor="none",
+    bbox_inches=tight_bbox_inches,
+    pad_inches=0,
+)
+
+fig.savefig(
+    pdf_path,
+    facecolor="white",
+    edgecolor="none",
+    bbox_inches=tight_bbox_inches,
+    pad_inches=0,
+)
+
 plt.close(fig)
+
+print(f"Saved PNG: {png_path}")
+print(f"Saved PDF: {pdf_path}")
