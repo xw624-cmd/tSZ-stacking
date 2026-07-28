@@ -326,6 +326,9 @@ CAP_ERROR_LW = 1.3
 
 CAP_ERROR_MARKER_SIZE = 5
 
+CAP_MAJOR_COLOR = "#771704"
+CAP_MINOR_COLOR = "#5b7fa6"
+
 CAP_ZERO_LINE_COLOR = '0.5'
 
 CAP_ZERO_LINE_WIDTH = 0.6
@@ -1535,8 +1538,8 @@ def plot_summary_sector_cap_profiles(all_bin_results, out_dir):
             ax.text(0.5, 0.5, CAP_NO_SECTOR_DATA_LABEL, transform=ax.transAxes, ha='center', va='center', color='0.35')
         else:
             ylim_pairs.extend([(maj_m, maj_s), (min_m, min_s)])
-            ax.errorbar(CAP_RADII_ARCMIN - 0.04, maj_m, yerr=maj_s, fmt='P', linestyle='none', capsize=CAP_ERROR_CAPSIZE, lw=CAP_ERROR_LW, ms=CAP_ERROR_MARKER_SIZE, label=CAP_MAJOR_SECTOR_LABEL)
-            ax.errorbar(CAP_RADII_ARCMIN + 0.04, min_m, yerr=min_s, fmt='X', linestyle='none', capsize=CAP_ERROR_CAPSIZE, lw=CAP_ERROR_LW, ms=CAP_ERROR_MARKER_SIZE, label=CAP_MINOR_SECTOR_LABEL)
+            ax.errorbar(CAP_RADII_ARCMIN - 0.04, maj_m, yerr=maj_s, fmt='P', linestyle='none', capsize=CAP_ERROR_CAPSIZE, lw=CAP_ERROR_LW, ms=CAP_ERROR_MARKER_SIZE, color=CAP_MAJOR_COLOR, label=CAP_MAJOR_SECTOR_LABEL)
+            ax.errorbar(CAP_RADII_ARCMIN + 0.04, min_m, yerr=min_s, fmt='X', linestyle='none', capsize=CAP_ERROR_CAPSIZE, lw=CAP_ERROR_LW, ms=CAP_ERROR_MARKER_SIZE, color=CAP_MINOR_COLOR, label=CAP_MINOR_SECTOR_LABEL)
         ax.axhline(0, color=CAP_ZERO_LINE_COLOR, lw=CAP_ZERO_LINE_WIDTH, ls=CAP_ZERO_LINE_STYLE)
         ax.set_title(_mass_bin_label(mass_lo, mass_hi), fontsize=CAP_PANEL_TITLE_SIZE, pad=CAP_PANEL_TITLE_PAD)
         ax.tick_params(labelsize=CAP_TICK_LABEL_SIZE)
@@ -1608,6 +1611,7 @@ def plot_summary_sector_posterior_curves(all_bin_results, out_dir):
                 capsize=CAP_ERROR_CAPSIZE,
                 lw=CAP_ERROR_LW,
                 ms=CAP_ERROR_MARKER_SIZE,
+                color=CAP_MAJOR_COLOR,
                 label=maj_label,
             )
             min_container = ax.errorbar(
@@ -1619,6 +1623,7 @@ def plot_summary_sector_posterior_curves(all_bin_results, out_dir):
                 capsize=CAP_ERROR_CAPSIZE,
                 lw=CAP_ERROR_LW,
                 ms=CAP_ERROR_MARKER_SIZE,
+                color=CAP_MINOR_COLOR,
                 label=min_label,
             )
             maj_color = maj_container.lines[0].get_color()
@@ -1865,9 +1870,6 @@ def plot_cap_mcmc_corner_pdf(all_bin_results, out_dir):
     if corner is None:
         raise ImportError('corner is required when RUN_CAP_MCMC=True')
 
-    major_color = "#771704"
-    minor_color = "#5b7fa6"
-
     plottable = []
     for i_bin, bin_result in enumerate(all_bin_results):
         full = bin_result.get('full_stack', {})
@@ -1914,7 +1916,7 @@ def plot_cap_mcmc_corner_pdf(all_bin_results, out_dir):
                              hspace=CAP_MCMC_A4_CORNER_WHSPACE),
         )
 
-        for mcmc, color in [(major, major_color), (minor, minor_color)]:
+        for mcmc, color in [(major, CAP_MAJOR_COLOR), (minor, CAP_MINOR_COLOR)]:
             if mcmc is None:
                 continue
             scaled_samples = np.asarray(mcmc['samples'], dtype=np.float64) * CAP_MCMC_DISPLAY_SCALE
@@ -1976,8 +1978,8 @@ def plot_cap_mcmc_corner_pdf(all_bin_results, out_dir):
         )
 
     legend_handles = [
-        Line2D([0], [0], color=major_color, lw=2.0, label=CAP_MAJOR_SECTOR_LABEL),
-        Line2D([0], [0], color=minor_color, lw=2.0, label=CAP_MINOR_SECTOR_LABEL),
+        Line2D([0], [0], color=CAP_MAJOR_COLOR, lw=2.0, label=CAP_MAJOR_SECTOR_LABEL),
+        Line2D([0], [0], color=CAP_MINOR_COLOR, lw=2.0, label=CAP_MINOR_SECTOR_LABEL),
     ]
     if legend_idx is not None:
         cells[legend_idx].legend(
