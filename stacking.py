@@ -1865,8 +1865,8 @@ def plot_cap_mcmc_corner_pdf(all_bin_results, out_dir):
     if corner is None:
         raise ImportError('corner is required when RUN_CAP_MCMC=True')
 
-    major_color = 'C0'
-    minor_color = 'C1'
+    major_color = "#771704"
+    minor_color = "#5b7fa6"
 
     plottable = []
     for i_bin, bin_result in enumerate(all_bin_results):
