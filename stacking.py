@@ -1,13 +1,6 @@
 #!/usr/bin/env python3
 
-"""Oriented tSZ stacking pipeline.
-
-CAP fitting follows the emcee line-fitting tutorial
-(https://emcee.readthedocs.io/en/stable/tutorials/line/):
-maximum-likelihood quadratic fit, walkers initialized near the ML solution,
-posterior percentiles and correlations from the samples, corner plots,
-posterior curve draws, and printed/exported coefficients.
-"""
+"""Oriented tSZ stacking pipeline."""
 
 import os
 import time
@@ -21,21 +14,11 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import TwoSlopeNorm
 from matplotlib.ticker import FuncFormatter, MaxNLocator
 from matplotlib.backends.backend_pdf import PdfPages
-from matplotlib.lines import Line2D
 from astropy.io import fits
 from pixell import enmap, reproject, utils
 from scipy.interpolate import RectBivariateSpline
 from scipy import spatial
-from scipy import stats as scipy_stats
 import h5py
-
-try:
-    import emcee
-    import corner
-except ImportError:
-    emcee = None
-    corner = None
-
 
 os.environ["PATH"] = "/Library/TeX/texbin:" + os.environ.get("PATH", "")
 plt.rcParams.update({
@@ -82,13 +65,16 @@ MAJOR_AXIS_ANGLE = 90.0
 
 MINOR_AXIS_ANGLE = 0.0
 
-CAP_N_AP = 6
+CAP_N_AP = 7
 
-CAP_AP_MIN_ARCMIN = 1.0
+CAP_AP_MIN_ARCMIN = 2.0
 
-CAP_AP_MAX_ARCMIN = 6.0
+CAP_AP_MAX_ARCMIN = 8.0
 
 CAP_RADII_ARCMIN = np.linspace(CAP_AP_MIN_ARCMIN, CAP_AP_MAX_ARCMIN, CAP_N_AP)
+
+# Liu et al., Eq. (A1): exclude theta <= theta_0 from every aperture.
+CAP_INNER_CUT_ARCMIN = 1.0
 
 MASS_BINS = [(11.0, 11.4), (11.4, 11.7), (11.7, 12.0)]
 
@@ -104,7 +90,7 @@ Z_MAX = 0.6
 
 RADIO_ONLY = False
 
-EXCLUDE_RADIO = True
+EXCLUDE_RADIO = False
 
 FIRST_MATCH_ARCSEC = 60.0
 
@@ -122,39 +108,15 @@ RUN_BOOTSTRAP = True
 
 N_BOOT = 10000
 
+# Export paired major/minor bootstrap realizations for downstream modeling.
+EXPORT_PAIRED_SECTOR_BOOTSTRAPS = True
+PAIRED_BOOTSTRAP_BASENAME = 'paired_sector_cap_bootstraps'
+
 SEED = 42
 
-CAP_SHAPE_FIT_MODEL = 'linear'
-
-_CAP_SHAPE_FIT_DEGREES = {'linear': 1, 'quadratic': 2}
-
-CAP_SHAPE_FIT_DEGREE = _CAP_SHAPE_FIT_DEGREES[CAP_SHAPE_FIT_MODEL]
-
-RUN_CAP_MCMC = True
-
-CAP_MCMC_N_WALKERS = 64
-
-CAP_MCMC_N_STEPS = 6000
-
-CAP_MCMC_BURN_IN = 1500
-
-CAP_MCMC_THIN = 5
-
-CAP_MCMC_INIT_BALL_SCALE = 0.0001
-
-CAP_MCMC_SEED = SEED
-
-CAP_MCMC_PROGRESS = True
-
-CAP_POSTERIOR_N_CURVES = 0
-
-CAP_POSTERIOR_CURVE_ALPHA = 0.08
-
-CAP_POSTERIOR_CURVE_LW = 0.8
 
 SUMMARY_DIR = './run_output'
 
-RADIO_STACK_KEY = 'stack_unori'
 
 MASS_WEIGHT_N_BINS = 20
 
@@ -194,23 +156,6 @@ STACK_COLORBAR_EXPONENT_SIZE = 13
 
 STACK_COLORBAR_EXPONENT_PAD = 6
 
-# Display every CAP MCMC coefficient in fixed 10^{-6} units.  Scaling the
-# corner samples before plotting prevents Matplotlib/corner from introducing
-# automatic 1e-7, e-7, or other e-notation anywhere in the PDF.
-CAP_MCMC_DISPLAY_SCALE = DISPLAY_Y_SCALE
-
-CAP_MCMC_EXPONENT = -6
-
-CAP_MCMC_TITLE_DECIMALS = 4
-
-# Corner-plot diagonal title size.  This was hardcoded to 8, which pushed the
-# scriptsize super/subscripts down to ~5.6pt, where Computer Modern's minus
-# thins to a hairline and PDF viewers drop it.  Keep this at 11 or above.
-CAP_MCMC_TITLE_SIZE = 8
-
-CAP_MCMC_SUPTITLE_SIZE = 16
-
-CAP_MCMC_TICK_DECIMALS = 4
 
 STACK_COLORBAR_WIDTH = 0.018
 
@@ -224,7 +169,7 @@ STACK_N_LABEL_BBOX_ALPHA = 0.75
 
 STACK_N_LABEL_BBOX_PAD = 1.5
 
-STACK_FULL_PANEL_TITLE_SIZE = 12
+STACK_FULL_PANEL_TITLE_SIZE = 14
 
 STACK_FULL_PANEL_TITLE_PAD = 18
 
@@ -238,17 +183,11 @@ STACK_FULL_N_LABEL_SIZE = 10
 
 STACK_FULL_ROW_LABEL_SIZE = 16
 
-STACK_RADIO_PANEL_TITLE_SIZE = 12
 
-STACK_RADIO_PANEL_TITLE_PAD = 18
 
-STACK_RADIO_SUPTITLE_SIZE = 16
 
-STACK_RADIO_AXIS_LABEL_SIZE = 15
 
-STACK_RADIO_TICK_LABEL_SIZE = 12
 
-STACK_RADIO_N_LABEL_SIZE = 10
 
 STACK_FULL_FIG_WIDTH_PER_COL = 4.0
 
@@ -268,21 +207,13 @@ STACK_FULL_CBAR_HEIGHT = 0.62
 
 STACK_FULL_SUPTITLE_Y = 0.96
 
-STACK_RADIO_FIG_WIDTH_PER_COL = 3.5
 
-STACK_RADIO_FIG_HEIGHT = 3.75
 
-STACK_RADIO_GRID_LEFT = 0.07
 
-STACK_RADIO_GRID_BOTTOM = 0.12
 
-STACK_RADIO_GRID_TOP = 0.78
 
-STACK_RADIO_CBAR_BOTTOM = 0.2
 
-STACK_RADIO_CBAR_HEIGHT = 0.56
 
-STACK_RADIO_SUPTITLE_Y = 0.975
 
 CAP_FIG_WIDTH_PER_COL = 6.35
 
@@ -298,9 +229,9 @@ CAP_SECTOR_TOP = 0.78
 
 CAP_WSPACE = 0.0
 
-CAP_PANEL_TITLE_SIZE = 18
+CAP_PANEL_TITLE_SIZE = 22
 
-CAP_PANEL_TITLE_PAD = 14
+CAP_PANEL_TITLE_PAD = 17
 
 CAP_SUPTITLE_SIZE = 20
 
@@ -387,7 +318,7 @@ CAP_CORR_FIG_HEIGHT_PER_ROW = 5.4
 
 CAP_CORR_WSPACE = 0.12
 
-CAP_CORR_N_TICKS = 6
+CAP_CORR_N_TICKS = 7
 
 CAP_CORR_TICK_LABEL_SIZE = 12
 
@@ -395,11 +326,11 @@ CAP_CORR_AXIS_LABEL_SIZE = 14
 
 CAP_CORR_PANEL_TITLE_SIZE = 16
 
-CAP_CORR_PANEL_TITLE_PAD = 10
+CAP_CORR_PANEL_TITLE_PAD = 12
 
 CAP_CORR_CBAR_LABEL_SIZE = 14
 
-CAP_CORR_SUPTITLE = '{\\rm Oriented-stack\\ CAP\\ Correlation\\ Matrices}'
+CAP_CORR_SUPTITLE = ''          #'{\\rm CAP\\ Correlation\\ Matrices}'
 
 CAP_CORR_SUPTITLE_Y = 0.98
 
@@ -419,9 +350,8 @@ STACK_ROW_LABEL_UNORIENTED = '{\\rm Unoriented}'
 
 STACK_ROW_LABEL_ORIENTED = '{\\rm Oriented}'
 
-STACK_FULL_SUPTITLE = '{\\rm Oriented\\ Stacked\\ Compton\\ }$y${\\rm\\ Maps}'
+STACK_FULL_SUPTITLE = ''          #'{\\rm Oriented\\ Stacked\\ Compton\\ }$y${\\rm\\ Maps}'
 
-STACK_RADIO_SUPTITLE = '{\\rm FIRST-matched\\ Radio-source\\ Stacked\\ Compton\\ }$y${\\rm\\ Maps}'
 
 CAP_X_LABEL = '$\\theta_{\\rm d}\\ [{\\rm arcmin}]$'
 
@@ -433,45 +363,17 @@ CAP_MAJOR_SECTOR_LABEL = '{\\rm Major-axis\\ sector}'
 
 CAP_MINOR_SECTOR_LABEL = '{\\rm Minor-axis\\ sector}'
 
-CAP_SECTOR_SUPTITLE = '{\\rm Oriented-stack\\ CAP\\ Profiles:\\ Major\\ vs.\\ Minor\\ Axis}'
+CAP_SECTOR_SUPTITLE = ''          #'{\\rm Oriented-stack\\ CAP\\ Profiles:\\ Major\\ vs.\\ Minor\\ Axis}'
 
 HIST_FRACTION_Y_LABEL = '$\\mathrm{Fraction\\ per\\ bin}$'
 
 HIST_BA_X_LABEL = '$b/a$'
 
-HIST_SELECTED_BA_SUPTITLE = '{\\rm Oriented\\ Sample\\ Axis\\ Ratio\\ Distribution}'
-
-CAP_FIT_LINE_LW = 2.0
-
-_CAP_FIT_MODEL_TEX = {'linear': 'Linear', 'quadratic': 'Quadratic'}[CAP_SHAPE_FIT_MODEL]
-
-CAP_FIT_SECTOR_SUPTITLE = '{\\rm Oriented-stack\\ CAP\\ ' + _CAP_FIT_MODEL_TEX + '\\ Fit:\\ ML\\ Curve\\ and\\ Posterior\\ Draws}'
+HIST_SELECTED_BA_SUPTITLE = ''          #'{\\rm Oriented\\ Sample\\ Axis\\ Ratio\\ Distribution}'
 
 CACHE_FILE = os.path.join(CACHE_DIR, 'stamps.h5')
 
-ORIENTED_PDF_NAMES = ['summary_oriented_full_stack_2x3.pdf', 'summary_oriented_full_stack_cap_profiles_1x3.pdf', 'summary_oriented_sector_cap_correlation_2x3.pdf', 'summary_oriented_sector_posterior_curves_1x3.pdf', 'summary_oriented_hist_ba_selected_1x3.pdf', 'summary_radio_full_stack_1x3.pdf']
-
-if CAP_SHAPE_FIT_MODEL not in _CAP_SHAPE_FIT_DEGREES:
-    raise ValueError(
-        "CAP_SHAPE_FIT_MODEL must be either 'linear' or 'quadratic'; "
-        f"got {CAP_SHAPE_FIT_MODEL!r}."
-    )
-    
-    
-# --- Combined corner-overlay page (not strict A4 — width fixed, height auto-cropped) ---
-CAP_MCMC_A4_WIDTH_IN = 8.27
-CAP_MCMC_A4_HEIGHT_IN = 9.0            # scratch height; bbox_inches='tight' crops the real output
-CAP_MCMC_A4_NCOLS = 2                   # 3 bins -> 2x2 grid, one empty cell
-CAP_MCMC_A4_WSPACE = 0.04
-CAP_MCMC_A4_HSPACE = -0.06              # negative pulls rows together, closing the row gap
-CAP_MCMC_A4_CORNER_WHSPACE = 0.06
-CAP_MCMC_A4_TITLE_SIZE = 7
-CAP_MCMC_A4_MASSLABEL_SIZE = 13
-CAP_MCMC_A4_MASSLABEL_X = 0.82           # moved right from 0.70
-CAP_MCMC_A4_MASSLABEL_Y = 0.82
-CAP_MCMC_A4_LEGEND_CELL = 1              # flattened row-major grid index -> top-right in a 2x2
-CAP_MCMC_A4_SUPTITLE = '{\\rm Oriented-stack\\ CAP\\ Posterior\\ Overlays}'
-CAP_MCMC_A4_SUPTITLE_Y = 1.005
+ORIENTED_PDF_NAMES = ['summary_oriented_full_stack_2x3.pdf', 'summary_oriented_full_stack_cap_profiles_1x3.pdf', 'summary_oriented_sector_cap_correlation_2x3.pdf', 'summary_oriented_hist_ba_selected_1x3.pdf']
 
 
 # ============================================================
@@ -702,6 +604,109 @@ def mean_profile_and_covariance(profiles, weights=None, seed=SEED):
     std = np.sqrt(np.clip(np.diag(cov), 0.0, None))
     return (mean.astype(np.float64), std.astype(np.float64), cov.astype(np.float64), n)
 
+
+def paired_profile_bootstrap(major_profiles, minor_profiles, weights=None, seed=SEED):
+    """Jointly bootstrap paired major- and minor-axis CAP profiles.
+
+    Each row of ``major_profiles`` and ``minor_profiles`` must refer to the
+    same galaxy. A single bootstrap index draw is applied to both arrays,
+    preserving the major--minor cross-covariance needed by a joint likelihood.
+    """
+    major_profiles = np.asarray(major_profiles, dtype=np.float64)
+    minor_profiles = np.asarray(minor_profiles, dtype=np.float64)
+
+    if major_profiles.ndim != 2 or minor_profiles.ndim != 2:
+        raise ValueError('major_profiles and minor_profiles must both be 2D arrays')
+    if major_profiles.shape != minor_profiles.shape:
+        raise ValueError(
+            'major_profiles and minor_profiles must have identical shapes; '
+            f'got {major_profiles.shape} and {minor_profiles.shape}'
+        )
+
+    n_total, n_ap = major_profiles.shape
+    valid = (
+        np.all(np.isfinite(major_profiles), axis=1)
+        & np.all(np.isfinite(minor_profiles), axis=1)
+    )
+
+    if weights is None:
+        w_all = np.ones(n_total, dtype=np.float64)
+    else:
+        w_all = np.asarray(weights, dtype=np.float64)
+        if w_all.shape != (n_total,):
+            raise ValueError(
+                'weights must have shape (n_galaxies,); '
+                f'got {w_all.shape} for {n_total} galaxies'
+            )
+        valid &= np.isfinite(w_all) & (w_all > 0.0)
+
+    major = major_profiles[valid]
+    minor = minor_profiles[valid]
+    weights_valid = w_all[valid]
+    n = len(major)
+
+    if n == 0 or np.sum(weights_valid) <= 0.0:
+        nan_profile = np.full(n_ap, np.nan, dtype=np.float64)
+        nan_cov = np.full((n_ap, n_ap), np.nan, dtype=np.float64)
+        nan_joint_cov = np.full((2 * n_ap, 2 * n_ap), np.nan, dtype=np.float64)
+        empty_boot = np.empty((0, n_ap), dtype=np.float64)
+        return {
+            'major_mean': nan_profile.copy(),
+            'minor_mean': nan_profile.copy(),
+            'major_std': nan_profile.copy(),
+            'minor_std': nan_profile.copy(),
+            'major_cov': nan_cov.copy(),
+            'minor_cov': nan_cov.copy(),
+            'cross_cov': nan_cov.copy(),
+            'joint_cov': nan_joint_cov,
+            'major_bootstrap': empty_boot.copy(),
+            'minor_bootstrap': empty_boot.copy(),
+            'n_galaxies': 0,
+            'valid_row_mask': valid,
+        }
+
+    major_mean = np.average(major, axis=0, weights=weights_valid)
+    minor_mean = np.average(minor, axis=0, weights=weights_valid)
+
+    if not RUN_BOOTSTRAP or n < 2:
+        major_boot = major_mean[None, :].copy()
+        minor_boot = minor_mean[None, :].copy()
+        joint_cov = np.zeros((2 * n_ap, 2 * n_ap), dtype=np.float64)
+    else:
+        rng = np.random.default_rng(seed)
+        major_boot = np.empty((N_BOOT, n_ap), dtype=np.float64)
+        minor_boot = np.empty((N_BOOT, n_ap), dtype=np.float64)
+
+        for b in range(N_BOOT):
+            draw = rng.integers(0, n, size=n)
+            draw_weights = weights_valid[draw]
+            major_boot[b] = np.average(major[draw], axis=0, weights=draw_weights)
+            minor_boot[b] = np.average(minor[draw], axis=0, weights=draw_weights)
+
+        joint_boot = np.concatenate([major_boot, minor_boot], axis=1)
+        joint_cov = np.cov(joint_boot, rowvar=False, ddof=1)
+
+    major_cov = joint_cov[:n_ap, :n_ap]
+    minor_cov = joint_cov[n_ap:, n_ap:]
+    cross_cov = joint_cov[:n_ap, n_ap:]
+    major_std = np.sqrt(np.clip(np.diag(major_cov), 0.0, None))
+    minor_std = np.sqrt(np.clip(np.diag(minor_cov), 0.0, None))
+
+    return {
+        'major_mean': major_mean.astype(np.float64),
+        'minor_mean': minor_mean.astype(np.float64),
+        'major_std': major_std.astype(np.float64),
+        'minor_std': minor_std.astype(np.float64),
+        'major_cov': major_cov.astype(np.float64),
+        'minor_cov': minor_cov.astype(np.float64),
+        'cross_cov': cross_cov.astype(np.float64),
+        'joint_cov': joint_cov.astype(np.float64),
+        'major_bootstrap': major_boot.astype(np.float64),
+        'minor_bootstrap': minor_boot.astype(np.float64),
+        'n_galaxies': int(n),
+        'valid_row_mask': valid,
+    }
+
 def make_angle_map(ny, nx):
     """Angle from stamp center: 0 is right, 90 is up."""
     cy, cx = (ny // 2, nx // 2)
@@ -720,19 +725,49 @@ def sector_mask(angle_map, center_deg, half_width_deg):
             mask |= (angle_map >= lo) | (angle_map < hi)
     return mask
 
-def compute_cap_values(image, r_map, pixscale, cap_radii_arcmin, pixel_area, sec_mask=None):
-    """Compensated aperture photometry on one image.
+def _validate_cap_filter(cap_radii_arcmin, inner_cut_arcmin):
+    """Require a nonempty positive ring for every requested aperture."""
+    radii = np.asarray(cap_radii_arcmin, dtype=np.float64)
+    if not np.isfinite(inner_cut_arcmin) or inner_cut_arcmin < 0:
+        raise ValueError('CAP_INNER_CUT_ARCMIN must be finite and nonnegative')
+    if (radii.ndim != 1 or radii.size == 0 or
+            np.any(~np.isfinite(radii)) or np.any(radii <= inner_cut_arcmin)):
+        raise ValueError('Every CAP aperture must be finite and greater than the inner cutoff')
+    return radii
+
+def _cap_filter_metadata():
+    """Record the window needed to reproduce the data in a forward model."""
+    return {
+        'cap_filter_type': 'liu_ring_ring_eq_A1_pixel_area_corrected',
+        'cap_inner_cut_arcmin': float(CAP_INNER_CUT_ARCMIN),
+        'cap_outer_radius_formula': 'sqrt(2 * theta_d**2 - theta_0**2)',
+        'cap_positive_weight': 1.0,
+        'cap_negative_weight': '-N_inner/N_outer (finite pixels in each aperture and sector)',
+        'cap_pixel_count_rescale_applied': True,
+        'cap_boundary_convention': 'theta_0 < theta < theta_d; theta_d < theta < theta_out',
+    }
+
+def compute_cap_values(image, r_map, pixscale, cap_radii_arcmin, pixel_area,
+                       sec_mask=None, inner_cut_arcmin=None):
+    """Liu ring-ring photometry, Eq. (A1), sampled at pixel centers.
 
     The returned CAP values are in y arcmin^2. Pixell/reproject handles
     the map projection during thumbnail extraction; this routine then works
     on the local projected cutout with pixel_area = pixscale_arcmin^2.
+
+    Boundaries follow Eq. (A1). Inner weights are +1; outer weights are
+    -N_inner/N_outer using finite pixel counts in the selected regions.
+    This corrects discrete area differences so a constant background cancels.
     """
+    if inner_cut_arcmin is None:
+        inner_cut_arcmin = CAP_INNER_CUT_ARCMIN
+    cap_radii_arcmin = _validate_cap_filter(cap_radii_arcmin, inner_cut_arcmin)
     cap = np.full(len(cap_radii_arcmin), np.nan, dtype=np.float64)
+    theta = r_map * pixscale
     for i, r_ap in enumerate(cap_radii_arcmin):
-        r_disc_pix = r_ap / pixscale
-        r_ring_pix = r_disc_pix * np.sqrt(2.0)
-        disc = r_map <= r_disc_pix
-        ring = (r_map > r_disc_pix) & (r_map <= r_ring_pix)
+        r_outer = np.sqrt(2.0 * r_ap**2 - inner_cut_arcmin**2)
+        disc = (theta > inner_cut_arcmin) & (theta < r_ap)
+        ring = (theta > r_ap) & (theta < r_outer)
         if sec_mask is not None:
             disc = disc & sec_mask
             ring = ring & sec_mask
@@ -1068,18 +1103,28 @@ def stack_from_cache(h5f, mask, label='', weights=None):
             dt = time.time() - t0
             print(f'    stacked {j + 1:,}/{n_sel:,}, rate={(j + 1) / max(dt, 1e-06):.0f}/s')
     print(f'  [stack: {label_txt}] {n_sel:,} galaxies used in final stack')
-    return {'n_success': n_sel, 'ny': ny, 'nx': nx, 'pixscale': pixscale, 'stack_unori': (stack_sum_unori / sum_w).astype(np.float64), 'stack_ori': (stack_sum_ori / sum_w).astype(np.float64), 'weights': selected_weights.astype(np.float64), 'sum_weights': sum_w, 'cap_full_values': cap_full_values, 'cap_major_values': cap_major_values, 'cap_minor_values': cap_minor_values, 'effective_mask': effective_mask}
+    return {
+        'n_success': n_sel,
+        'ny': ny,
+        'nx': nx,
+        'pixscale': pixscale,
+        'stack_unori': (stack_sum_unori / sum_w).astype(np.float64),
+        'stack_ori': (stack_sum_ori / sum_w).astype(np.float64),
+        'weights': selected_weights.astype(np.float64),
+        'sum_weights': sum_w,
+        'cap_full_values': cap_full_values,
+        'cap_major_values': cap_major_values,
+        'cap_minor_values': cap_minor_values,
+        'effective_mask': effective_mask,
+        # Exact cache rows corresponding, in order, to the per-galaxy CAP arrays.
+        # This makes it possible to export the same galaxies' masses, redshifts,
+        # weights, and catalog IDs for CAPPIBARAS sample averaging.
+        'cache_indices': np.asarray(indices, dtype=np.int64),
+    }
 
 def _visible_tex_minus():
     return '\\text{\\textminus}'
 
-def _tex_visible_exponent(exponent):
-    """Render an integer exponent for use inside ``10^{...}`` with the
-    visible minus sign instead of a bare ``-``."""
-    exponent = int(exponent)
-    if exponent < 0:
-        return f'{_visible_tex_minus()}{abs(exponent)}'
-    return f'{exponent}'
 
 def _latex_visible_minus_number(value, precision=3, zero_tol=1e-12):
     """Return a LaTeX math-mode number using the visible minus glyph.
@@ -1112,147 +1157,6 @@ def _tex_unscaled_tick(x, pos=None):
     """Format ordinary stacked-map x/y ticks with visible minus signs."""
     return _latex_visible_minus_number(x, precision=3)
 
-def _fixed_decimal_body(value, decimals, strip_zeros):
-    """Fixed-point number, visible minus, never e notation.
-
-    Returns bare TeX (no surrounding $ ... $) so it can be dropped either into
-    its own math span or into a larger one such as a corner-plot title.
-    """
-    value = float(value)
-    decimals = int(decimals)
-    if abs(value) < 0.5 * 10.0 ** (-decimals):
-        return '0' if strip_zeros else f'{0.0:.{decimals}f}'
-    sign = _visible_tex_minus() if value < 0.0 else ''
-    body = f'{abs(value):.{decimals}f}'
-    if strip_zeros:
-        body = body.rstrip('0').rstrip('.') or '0'
-    return f'{sign}{body}'
-
-def _tex_cap_mcmc_tick(x, pos=None):
-    """Tick formatter for the already-scaled CAP MCMC corner axes."""
-    if not np.isfinite(x):
-        return ''
-    return f'${_fixed_decimal_body(x, CAP_MCMC_TICK_DECIMALS, strip_zeros=True)}$'
-
-def _cap_mcmc_parameter_label(name, sector_subscript, degree):
-    """Corner-axis label with the fixed 10^{-6} coefficient unit.
-
-    For y_CAP in y arcmin^2 and a theta^p term, the coefficient carries
-    arcmin^(2-p).  The displayed numerical value is the physical coefficient
-    divided by 10^{-6}.
-    """
-    exponent_tex = _tex_visible_exponent(CAP_MCMC_EXPONENT)
-    names = _cap_coefficient_names(degree)
-    try:
-        index = names.index(name)
-    except ValueError:
-        return f'${name}_{{\\rm {sector_subscript}}}\\,[10^{{{exponent_tex}}}]$'
-    power = degree - index
-    arcmin_power = 2 - power
-    if arcmin_power == 0:
-        unit = ''
-    elif arcmin_power == 1:
-        unit = '\\,\\mathrm{arcmin}'
-    else:
-        unit = f'\\,\\mathrm{{arcmin}}^{{{arcmin_power}}}'
-    return f'${name}_{{\\rm {sector_subscript}}}\\,[10^{{{exponent_tex}}}{unit}]$'
-
-def _set_cap_mcmc_corner_titles(fig, summary, labels, fontsize=CAP_MCMC_TITLE_SIZE):
-    """Set the diagonal titles to "<label> = median +err -err".
-
-    ``corner`` can build these itself via show_titles=True, but it would
-    re-derive the label text and use a bare math minus.  Building them here
-    reuses ``labels`` verbatim from the axis-label list and the already
-    computed posterior percentiles, so the label and the minus sign are
-    identical to the ones on the side axes.
-
-    summary : the dict from _posterior_percentile_summary, with its values
-        already multiplied by CAP_MCMC_DISPLAY_SCALE.
-    """
-    ndim = len(labels)
-    axes = np.asarray(fig.axes, dtype=object)
-    if axes.size != ndim * ndim:
-        return
-    axes = axes.reshape((ndim, ndim))
-    fmt = lambda v: _fixed_decimal_body(v, CAP_MCMC_TITLE_DECIMALS, strip_zeros=False)
-    minus = _visible_tex_minus()
-    for i in range(ndim):
-        median = fmt(summary['median'][i])
-        plus = fmt(summary['err_plus'][i])
-        low = fmt(summary['err_minus'][i])
-        axes[i, i].set_title(
-            f'{labels[i]} $= {median}^{{+{plus}}}_{{{minus}{low}}}$',
-            fontsize=fontsize,
-        )
-
-def _set_cap_mcmc_corner_titles_overlay(fig, major_summary, minor_summary, names, degree, fontsize=CAP_MCMC_TITLE_SIZE):
-    """Set diagonal titles for an overlaid major/minor corner plot.
-
-    Each diagonal title gets up to two lines:
-      1. major-sector posterior summary
-      2. minor-sector posterior summary
-
-    The summary values should already be multiplied by CAP_MCMC_DISPLAY_SCALE.
-    """
-    ndim = len(names)
-    axes = np.asarray(fig.axes, dtype=object)
-    if axes.size != ndim * ndim:
-        return
-    axes = axes.reshape((ndim, ndim))
-
-    fmt = lambda v: _fixed_decimal_body(v, CAP_MCMC_TITLE_DECIMALS, strip_zeros=False)
-    minus = _visible_tex_minus()
-
-    for i, name in enumerate(names):
-        lines = []
-
-        if major_summary is not None:
-            label_maj = _cap_mcmc_parameter_label(name, 'maj', degree)
-            median = fmt(major_summary['median'][i])
-            plus = fmt(major_summary['err_plus'][i])
-            low = fmt(major_summary['err_minus'][i])
-            lines.append(
-                f'{label_maj} $= {median}^{{+{plus}}}_{{{minus}{low}}}$'
-            )
-
-        if minor_summary is not None:
-            label_min = _cap_mcmc_parameter_label(name, 'min', degree)
-            median = fmt(minor_summary['median'][i])
-            plus = fmt(minor_summary['err_plus'][i])
-            low = fmt(minor_summary['err_minus'][i])
-            lines.append(
-                f'{label_min} $= {median}^{{+{plus}}}_{{{minus}{low}}}$'
-            )
-
-        axes[i, i].set_title('\n'.join(lines), fontsize=fontsize)
-
-def _format_cap_mcmc_corner_axes(fig, ndim):
-    """Apply the no-e-notation, visible-minus tick formatter to a corner plot.
-
-    ``corner`` already does the axis work that used to be reimplemented here:
-    it gives each parameter one common numerical range wherever that parameter
-    appears (horizontally in its column and vertically in its row), and it
-    installs a NullFormatter on the interior panels so that only the bottom
-    row shows x tick labels and only the left column shows y tick labels.
-
-    So the only thing left to do is swap corner's default ScalarFormatter for
-    ours on exactly the panels that actually display labels -- the bottom row
-    and the left column.  Touching the interior panels would overwrite their
-    NullFormatter and make the hidden labels reappear.
-    """
-    axes = np.asarray(fig.axes, dtype=object)
-    if axes.size != ndim * ndim:
-        return
-    axes = axes.reshape((ndim, ndim))
-    formatter = FuncFormatter(_tex_cap_mcmc_tick)
-    for col in range(ndim):
-        ax = axes[ndim - 1, col]
-        ax.xaxis.set_major_formatter(formatter)
-        ax.xaxis.get_offset_text().set_visible(False)
-    for row in range(1, ndim):
-        ax = axes[row, 0]
-        ax.yaxis.set_major_formatter(formatter)
-        ax.yaxis.get_offset_text().set_visible(False)
 
 def _apply_scientific_y_ticks(ax, nbins=CAP_Y_TICK_NBINS):
     """Apply scaled CAP y-axis tick labels.
@@ -1342,15 +1246,6 @@ def _set_cap_ylabel(ax, label, fontsize):
     ax.yaxis.set_label_coords(CAP_YLABEL_X, CAP_YLABEL_Y)
 
 
-def _legend_label_with_reduced_chi2(base_label, mcmc):
-    """Legend label optionally augmented with reduced chi^2."""
-    if not isinstance(mcmc, dict):
-        return base_label
-    chi2 = mcmc.get('chi2_gof')
-    dof = mcmc.get('dof_gof')
-    if np.isfinite(chi2) and np.isfinite(dof) and dof > 0:
-        return rf'{base_label} ($\chi^2_\nu = {chi2 / dof:.3f}$)'
-    return base_label
 def _mass_bin_label(mass_lo, mass_hi):
     return MASS_BIN_LABEL_TEMPLATE.format(mass_lo=mass_lo, mass_hi=mass_hi)
 
@@ -1358,19 +1253,18 @@ def _n_stacked_label(n_success):
     return N_STACKED_LABEL_TEMPLATE.format(n_stacked=int(n_success))
 
 def _collect_stack_values_from_results(all_bin_results):
-    """Collect only oriented and radio stack pixels for a shared color scale."""
+    """Collect main unoriented/oriented stack pixels for a shared color scale."""
     chunks = []
     for bin_result in all_bin_results:
-        for result_key in ('full_stack', 'radio_full_stack'):
-            result = bin_result.get(result_key, {})
-            if not isinstance(result, dict):
-                continue
-            for stack_key in ('stack_unori', 'stack_ori'):
-                stack = result.get(stack_key)
-                if stack is not None:
-                    vals = stack[np.isfinite(stack)]
-                    if len(vals) > 0:
-                        chunks.append(vals)
+        result = bin_result.get('full_stack', {})
+        if not isinstance(result, dict):
+            continue
+        for stack_key in ('stack_unori', 'stack_ori'):
+            stack = result.get(stack_key)
+            if stack is not None:
+                vals = stack[np.isfinite(stack)]
+                if len(vals) > 0:
+                    chunks.append(vals)
     return chunks
 
 def _shared_stack_norm(finite_chunks):
@@ -1557,452 +1451,21 @@ def plot_summary_sector_cap_profiles(all_bin_results, out_dir):
     else:
         for ax in axes:
             _apply_scientific_y_ticks(ax)
-    fig.suptitle(CAP_SECTOR_SUPTITLE, fontsize=CAP_SUPTITLE_SIZE, y=CAP_SECTOR_SUPTITLE_Y)
+    middle_ax = axes[len(axes) // 2]
+    middle_pos = middle_ax.get_position()
+    middle_center_x = middle_pos.x0 + 0.5 * middle_pos.width
+    fig.suptitle(
+        CAP_SECTOR_SUPTITLE,
+        fontsize=CAP_SUPTITLE_SIZE,
+        x=middle_center_x,
+        y=CAP_SECTOR_SUPTITLE_Y,
+    )
     path = os.path.join(out_dir, 'summary_oriented_full_stack_cap_profiles_1x3.pdf')
     _savefig(path)
     plt.close(fig)
     print(f'  [summary sector CAP] {path}')
 
-def plot_summary_sector_posterior_curves(all_bin_results, out_dir):
-    """One row by three columns: major/minor CAP data with the ML polynomial
-    curve and random posterior draws overlaid (emcee line-tutorial style).
 
-    The spread of the posterior curves around the ML curve is the visual
-    statement of the parameter uncertainties and correlations.
-    """
-    if len(all_bin_results) == 0:
-        return
-    fig, axes = plt.subplots(
-        1,
-        len(MASS_BINS),
-        figsize=(CAP_FIG_WIDTH_PER_COL * len(MASS_BINS), CAP_FIG_HEIGHT),
-        squeeze=False,
-        sharey=True,
-    )
-    axes = axes.ravel()
-    fig.subplots_adjust(left=CAP_LEFT, right=CAP_RIGHT, bottom=CAP_BOTTOM, top=CAP_SECTOR_TOP, wspace=CAP_WSPACE)
-    theta = np.asarray(CAP_RADII_ARCMIN, dtype=np.float64)
-    theta_line = np.linspace(theta.min(), theta.max(), 100)
-    rng = np.random.default_rng(SEED)
-    ylim_pairs = []
-    for c, bin_result in enumerate(all_bin_results):
-        ax = axes[c]
-        mass_lo = bin_result.get('mass_lo', MASS_BINS[c][0])
-        mass_hi = bin_result.get('mass_hi', MASS_BINS[c][1])
-        res = bin_result.get('full_stack', {})
-        maj_m = _cap_to_plot_units(res.get('cap_major_mean'))
-        maj_s = _cap_to_plot_units(res.get('cap_major_std'))
-        min_m = _cap_to_plot_units(res.get('cap_minor_mean'))
-        min_s = _cap_to_plot_units(res.get('cap_minor_std'))
-        maj_fit = res.get('mcmc_major')
-        min_fit = res.get('mcmc_minor')
-        if maj_m is None or maj_s is None or min_m is None or (min_s is None):
-            ax.text(0.5, 0.5, CAP_NO_SECTOR_DATA_LABEL, transform=ax.transAxes, ha='center', va='center', color='0.35')
-        else:
-            ylim_pairs.extend([(maj_m, maj_s), (min_m, min_s)])
-            maj_label = _legend_label_with_reduced_chi2(CAP_MAJOR_SECTOR_LABEL, maj_fit)
-            min_label = _legend_label_with_reduced_chi2(CAP_MINOR_SECTOR_LABEL, min_fit)
-            maj_container = ax.errorbar(
-                theta - 0.04,
-                maj_m,
-                yerr=maj_s,
-                fmt='P',
-                linestyle='none',
-                capsize=CAP_ERROR_CAPSIZE,
-                lw=CAP_ERROR_LW,
-                ms=CAP_ERROR_MARKER_SIZE,
-                color=CAP_MAJOR_COLOR,
-                label=maj_label,
-            )
-            min_container = ax.errorbar(
-                theta + 0.04,
-                min_m,
-                yerr=min_s,
-                fmt='X',
-                linestyle='none',
-                capsize=CAP_ERROR_CAPSIZE,
-                lw=CAP_ERROR_LW,
-                ms=CAP_ERROR_MARKER_SIZE,
-                color=CAP_MINOR_COLOR,
-                label=min_label,
-            )
-            maj_color = maj_container.lines[0].get_color()
-            min_color = min_container.lines[0].get_color()
-            for mcmc, color in [(maj_fit, maj_color), (min_fit, min_color)]:
-                if not isinstance(mcmc, dict) or mcmc.get('samples') is None:
-                    continue
-                X_line = _design_matrix_polynomial(theta_line, mcmc['degree'])
-                samples = mcmc['samples']
-                n_draw = min(CAP_POSTERIOR_N_CURVES, len(samples))
-                for i in rng.integers(0, len(samples), size=n_draw):
-                    ax.plot(theta_line, X_line @ samples[i], color=color, lw=CAP_POSTERIOR_CURVE_LW, alpha=CAP_POSTERIOR_CURVE_ALPHA)
-                if np.all(np.isfinite(mcmc['beta_ml'])):
-                    ax.plot(theta_line, X_line @ mcmc['beta_ml'], color=color, lw=CAP_FIT_LINE_LW, ls='-')
-        ax.axhline(0, color=CAP_ZERO_LINE_COLOR, lw=CAP_ZERO_LINE_WIDTH, ls=CAP_ZERO_LINE_STYLE)
-        ax.set_title(_mass_bin_label(mass_lo, mass_hi), fontsize=CAP_PANEL_TITLE_SIZE, pad=CAP_PANEL_TITLE_PAD)
-        ax.tick_params(labelsize=CAP_TICK_LABEL_SIZE)
-        ax.set_xlabel(CAP_X_LABEL, fontsize=CAP_AXIS_LABEL_SIZE_SECTOR)
-        if c == 0:
-            _set_cap_ylabel(ax, _cap_plot_axis_label(), CAP_AXIS_LABEL_SIZE_SECTOR)
-        else:
-            ax.tick_params(labelleft=False)
-        ax.legend(loc=CAP_LEGEND_LOC_SECTOR, fontsize=CAP_LEGEND_SIZE_SECTOR)
-    shared_ylim = _shared_cap_ylim(ylim_pairs)
-    if shared_ylim is not None:
-        for ax in axes:
-            ax.set_ylim(shared_ylim)
-            _apply_scientific_y_ticks(ax)
-    else:
-        for ax in axes:
-            _apply_scientific_y_ticks(ax)
-    fig.suptitle(CAP_FIT_SECTOR_SUPTITLE, fontsize=CAP_SUPTITLE_SIZE, y=CAP_SECTOR_SUPTITLE_Y)
-    path = os.path.join(out_dir, 'summary_oriented_sector_posterior_curves_1x3.pdf')
-    _savefig(path)
-    plt.close(fig)
-    print(f'  [summary sector posterior curves] {path}')
-
-def plot_summary_radio_full_stacks(all_bin_results, out_dir, stack_norm):
-    """One row by three columns: radio-only full stacks by mass bin."""
-    if len(all_bin_results) == 0:
-        return
-    nrows = 1
-    ncols = len(MASS_BINS)
-    fig, axes = plt.subplots(nrows, ncols, figsize=(STACK_RADIO_FIG_WIDTH_PER_COL * ncols, STACK_RADIO_FIG_HEIGHT), squeeze=False, sharex=True, sharey=True)
-    grid_left = STACK_RADIO_GRID_LEFT
-    grid_bottom = STACK_RADIO_GRID_BOTTOM
-    grid_top = STACK_RADIO_GRID_TOP
-    grid_right = _set_touching_square_grid(fig, axes, grid_left, grid_bottom, grid_top)
-    axes = axes.ravel()
-    last_im = None
-    for c, bin_result in enumerate(all_bin_results):
-        ax = axes[c]
-        mass_lo = bin_result.get('mass_lo', MASS_BINS[c][0])
-        mass_hi = bin_result.get('mass_hi', MASS_BINS[c][1])
-        res = bin_result.get('radio_full_stack', {})
-        stack = res.get(RADIO_STACK_KEY) if isinstance(res, dict) else None
-        pixscale = res.get('pixscale') if isinstance(res, dict) else None
-        im = _imshow_stack_panel(ax, stack, pixscale, stack_norm, res.get('n_success', 0), axis_label_size=STACK_RADIO_AXIS_LABEL_SIZE, tick_label_size=STACK_RADIO_TICK_LABEL_SIZE, n_label_size=STACK_RADIO_N_LABEL_SIZE)
-        if im is not None:
-            last_im = im
-        _prune_touching_xy_ticks(ax)
-        if c > 0:
-            ax.set_ylabel('')
-            ax.tick_params(labelleft=False)
-        ax.set_title(_mass_bin_label(mass_lo, mass_hi), fontsize=STACK_RADIO_PANEL_TITLE_SIZE, pad=STACK_RADIO_PANEL_TITLE_PAD)
-    if last_im is not None:
-        cax = fig.add_axes([grid_right + STACK_COLORBAR_PAD, STACK_RADIO_CBAR_BOTTOM, STACK_COLORBAR_WIDTH, STACK_RADIO_CBAR_HEIGHT])
-        cb = fig.colorbar(last_im, cax=cax)
-        _format_colorbar(cb, STACK_COLORBAR_LABEL)
-    fig.suptitle(STACK_RADIO_SUPTITLE, fontsize=STACK_RADIO_SUPTITLE_SIZE, y=STACK_RADIO_SUPTITLE_Y)
-    path = os.path.join(out_dir, 'summary_radio_full_stack_1x3.pdf')
-    _savefig(path)
-    plt.close(fig)
-    print(f'  [summary radio full stacks] {path}')
-
-def _cap_shape_fit_model_description(degree=CAP_SHAPE_FIT_DEGREE):
-    """Human-readable description of the active polynomial fit."""
-    if degree == 1:
-        return 'linear fit, CAP ~ m*theta + c'
-    if degree == 2:
-        return 'quadratic fit, CAP ~ a*theta^2 + b*theta + c'
-    return f'degree-{degree} polynomial fit'
-
-def _design_matrix_polynomial(theta, degree):
-    """Design matrix for a polynomial in theta.
-
-    np.vander(theta, degree + 1) already returns the columns in exactly the
-    order this pipeline wants -- [theta^degree, ..., theta, 1] -- with the
-    constant/offset term last.
-    """
-    return np.vander(np.asarray(theta, dtype=np.float64), degree + 1)
-
-def _cap_coefficient_names(degree=CAP_SHAPE_FIT_DEGREE):
-    """Plain-text coefficient names in design-matrix order."""
-    if degree == 1:
-        return ['m', 'c']
-    if degree == 2:
-        return ['a', 'b', 'c']
-    return [*[f'theta^{power}' if power > 1 else 'theta' for power in range(degree, 0, -1)], 'c']
-
-def _posterior_percentile_summary(samples):
-    """Return median and asymmetric 68% uncertainties for each column."""
-    samples = np.asarray(samples, dtype=np.float64)
-    q16, q50, q84 = np.percentile(samples, [16.0, 50.0, 84.0], axis=0)
-    return {'q16': q16, 'median': q50, 'q84': q84, 'err_minus': q50 - q16, 'err_plus': q84 - q50}
-
-def run_quadratic_mcmc(cap_mean, cap_cov, theta=None, degree=CAP_SHAPE_FIT_DEGREE, seed=CAP_MCMC_SEED):
-    """Fit one CAP profile with the emcee line-fitting tutorial recipe
-    (https://emcee.readthedocs.io/en/stable/tutorials/line/).
-
-    1. Maximum-likelihood fit: the polynomial model is linear in its
-       coefficients and the likelihood is Gaussian, so the ML solution is
-       the closed-form weighted-least-squares solution -- no optimizer.
-    2. Walkers start in a tiny Gaussian ball around the ML solution.
-    3. Flat prior: the log-probability is just the Gaussian log-likelihood
-       built from the full bootstrap covariance of the CAP profile.
-    4. Uncertainties are 16/50/84 posterior percentiles and the parameter
-       correlation matrix comes directly from the flattened samples.
-
-    Goodness of fit: chi2_gof = r^T C^-1 r at the ML solution, with
-    dof_gof = n_apertures - n_parameters and pte_gof the probability of a
-    larger chi2 by chance. chi2/dof near 1 (PTE not extreme in either
-    direction) means the quadratic describes the profile adequately;
-    chi2/dof >> 1 (tiny PTE) means it does not, and the parameter
-    uncertainties below should not be trusted.
-    """
-    n_params = degree + 1
-    nan_vec = np.full(n_params, np.nan)
-    out = {'degree': degree, 'parameter_names': _cap_coefficient_names(degree), 'beta_ml': nan_vec.copy(), 'samples': None, 'summary': {k: nan_vec.copy() for k in ('q16', 'median', 'q84', 'err_minus', 'err_plus')}, 'param_corr': np.full((n_params, n_params), np.nan), 'acceptance_fraction': np.nan, 'autocorr_time': nan_vec.copy(), 'n_posterior_samples': 0, 'chi2_gof': np.nan, 'dof_gof': 0, 'pte_gof': np.nan}
-    if not RUN_CAP_MCMC:
-        return out
-    if emcee is None or corner is None:
-        raise ImportError("RUN_CAP_MCMC=True requires the 'emcee' and 'corner' packages. Install them with: python -m pip install emcee corner")
-    if theta is None:
-        theta = CAP_RADII_ARCMIN
-    theta = np.asarray(theta, dtype=np.float64)
-    y = np.asarray(cap_mean, dtype=np.float64)
-    cov = np.asarray(cap_cov, dtype=np.float64)
-    if y.ndim != 1 or theta.size != y.size or cov.shape != (y.size, y.size) or (not np.all(np.isfinite(y))) or (not np.all(np.isfinite(cov))):
-        return out
-    burn = int(CAP_MCMC_BURN_IN)
-    thin = int(CAP_MCMC_THIN)
-    if burn < 0 or burn >= CAP_MCMC_N_STEPS:
-        raise ValueError('CAP_MCMC_BURN_IN must satisfy 0 <= burn-in < n_steps.')
-    if thin <= 0:
-        raise ValueError('CAP_MCMC_THIN must be positive.')
-    X = _design_matrix_polynomial(theta, degree)
-    cov_inv = np.linalg.inv(cov)
-    # Closed-form ML/weighted-least-squares solution and its parameter
-    # covariance (the inverse Fisher matrix), both from a single inverse.
-    beta_cov = np.linalg.inv(X.T @ cov_inv @ X)
-    beta_ml = beta_cov @ (X.T @ cov_inv @ y)
-    out['beta_ml'] = beta_ml
-    resid_ml = y - X @ beta_ml
-    out['chi2_gof'] = float(resid_ml @ cov_inv @ resid_ml)
-    out['dof_gof'] = int(y.size - n_params)
-    if out['dof_gof'] > 0:
-        out['pte_gof'] = float(scipy_stats.chi2.sf(out['chi2_gof'], df=out['dof_gof']))
-    beta_sigma = np.sqrt(np.clip(np.diag(beta_cov), 0.0, None))
-    beta_sigma = np.where(beta_sigma > 0.0, beta_sigma, np.maximum(np.abs(beta_ml), np.finfo(np.float64).eps))
-
-    def log_probability(beta):
-        resid = y - X @ beta
-        return -0.5 * float(resid @ cov_inv @ resid)
-
-    rng = np.random.default_rng(seed)
-    nwalkers = max(int(CAP_MCMC_N_WALKERS), 2 * n_params + 2)
-    if nwalkers % 2 != 0:
-        nwalkers += 1
-    pos = beta_ml + CAP_MCMC_INIT_BALL_SCALE * beta_sigma * rng.standard_normal((nwalkers, n_params))
-    sampler = emcee.EnsembleSampler(nwalkers, n_params, log_probability)
-    sampler.run_mcmc(pos, int(CAP_MCMC_N_STEPS), progress=CAP_MCMC_PROGRESS)
-    flat = sampler.get_chain(discard=burn, thin=thin, flat=True)
-    out['samples'] = flat
-    out['summary'] = _posterior_percentile_summary(flat)
-    out['param_corr'] = np.corrcoef(flat, rowvar=False)
-    out['acceptance_fraction'] = float(np.mean(sampler.acceptance_fraction))
-    out['n_posterior_samples'] = int(flat.shape[0])
-    try:
-        out['autocorr_time'] = np.asarray(sampler.get_autocorr_time(tol=0), dtype=np.float64)
-    except Exception as exc:
-        print(f'  [MCMC] autocorrelation-time estimate unavailable: {exc}')
-    return out
-
-def _format_posterior_value(median, err_minus, err_plus):
-    """Compact median with asymmetric 68% credible interval."""
-    if not (np.isfinite(median) and np.isfinite(err_minus) and np.isfinite(err_plus)):
-        return 'nan'
-    return f'{median:.6e} -{err_minus:.2e} +{err_plus:.2e}'
-
-def print_cap_mcmc_fit_tables(all_bin_results):
-    """Print ML values, posterior medians with 16th/84th-percentile
-    uncertainties, and the posterior parameter correlation matrix for each
-    mass bin and sector."""
-    if not RUN_CAP_MCMC:
-        return
-    for i_bin, bin_result in enumerate(all_bin_results):
-        mass_lo = bin_result.get('mass_lo', MASS_BINS[i_bin][0])
-        mass_hi = bin_result.get('mass_hi', MASS_BINS[i_bin][1])
-        full = bin_result.get('full_stack', {})
-        if not isinstance(full, dict):
-            continue
-        for key, sector_word in [('mcmc_major', 'major'), ('mcmc_minor', 'minor')]:
-            mcmc = full.get(key)
-            if not isinstance(mcmc, dict) or mcmc.get('samples') is None:
-                continue
-            print('\n' + '=' * 88)
-            print(f"CAP MCMC posterior ({sector_word} sector): logM ({mass_lo:.1f}, {mass_hi:.1f}] [{_cap_shape_fit_model_description(mcmc['degree'])}]")
-            if np.isfinite(mcmc['chi2_gof']) and mcmc['dof_gof'] > 0:
-                print(f"Goodness of fit at ML: chi2 = {mcmc['chi2_gof']:.3f}, dof = {mcmc['dof_gof']}, chi2/dof = {mcmc['chi2_gof'] / mcmc['dof_gof']:.3f}, PTE = {mcmc['pte_gof']:.3g}")
-            print(f"Mean acceptance fraction: {mcmc['acceptance_fraction']:.3f}")
-            tau = np.asarray(mcmc['autocorr_time'], dtype=np.float64)
-            if np.all(np.isfinite(tau)):
-                print('Autocorrelation times: ' + ', '.join((f'{x:.1f}' for x in tau)))
-            print(f"Flattened posterior samples: {mcmc['n_posterior_samples']:,}")
-            names = mcmc['parameter_names']
-            s = mcmc['summary']
-            print(f"{'parameter':<12}{'ML':>16}{'posterior median -16/+84':>34}")
-            print('-' * 62)
-            for j, name in enumerate(names):
-                post_txt = _format_posterior_value(s['median'][j], s['err_minus'][j], s['err_plus'][j])
-                print(f"{name:<12}{mcmc['beta_ml'][j]:>16.6e}{post_txt:>34}")
-            corr = np.asarray(mcmc['param_corr'], dtype=np.float64)
-            print('Posterior parameter correlation matrix:')
-            print(' ' * 10 + ''.join((f'{n:>10}' for n in names)))
-            for j, name in enumerate(names):
-                print(f'{name:<10}' + ''.join((f'{corr[j, k]:>10.3f}' for k in range(len(names)))))
-            print('=' * 88)
-
-def plot_cap_mcmc_corner_pdf(all_bin_results, out_dir):
-    """Write ALL mass-bin overlaid major/minor corner plots onto ONE page.
-
-    The per-bin overlaid corners are laid out as a grid of matplotlib
-    subfigures (two columns by default). Each panel is forced square so the
-    posterior contours show correlation rather than the cell aspect ratio.
-    Any leftover cell (e.g. the 4th slot in a 3-bin, 2x2 grid) holds the
-    shared legend at CAP_MCMC_A4_LEGEND_CELL. The page is not literal A4:
-    width is fixed but height is generous scratch space, cropped tightly by
-    bbox_inches='tight' at save time. Returns a one-element list with the
-    combined PDF path.
-    """
-    if not RUN_CAP_MCMC:
-        return []
-    if corner is None:
-        raise ImportError('corner is required when RUN_CAP_MCMC=True')
-
-    plottable = []
-    for i_bin, bin_result in enumerate(all_bin_results):
-        full = bin_result.get('full_stack', {})
-        if not isinstance(full, dict):
-            continue
-        major = full.get('mcmc_major')
-        minor = full.get('mcmc_minor')
-        if not isinstance(major, dict) or major.get('samples') is None:
-            major = None
-        if not isinstance(minor, dict) or minor.get('samples') is None:
-            minor = None
-        if major is None and minor is None:
-            continue
-        mass_lo = bin_result.get('mass_lo', MASS_BINS[i_bin][0])
-        mass_hi = bin_result.get('mass_hi', MASS_BINS[i_bin][1])
-        plottable.append((mass_lo, mass_hi, major, minor))
-
-    if not plottable:
-        return []
-
-    n_bins = len(plottable)
-    ncols = 1 if n_bins == 1 else CAP_MCMC_A4_NCOLS
-    nrows = -(-n_bins // ncols)  # ceil division
-
-    n_cells = nrows * ncols
-    legend_idx = CAP_MCMC_A4_LEGEND_CELL if n_cells > n_bins else None
-    bin_cell_idx = [i for i in range(n_cells) if i != legend_idx][:n_bins]
-
-    fig = plt.figure(figsize=(CAP_MCMC_A4_WIDTH_IN, CAP_MCMC_A4_HEIGHT_IN))
-    grid = fig.subfigures(nrows, ncols, wspace=CAP_MCMC_A4_WSPACE, hspace=CAP_MCMC_A4_HSPACE)
-    cells = np.atleast_1d(grid).ravel()
-
-    for cell_i, (mass_lo, mass_hi, major, minor) in zip(bin_cell_idx, plottable):
-        cell = cells[cell_i]
-        ref = major if major is not None else minor
-        names = ref['parameter_names']
-        degree = int(ref['degree'])
-        ndim = len(names)
-        labels = [_cap_mcmc_parameter_label(name, 'fit', degree) for name in names]
-
-        cell.subplots(
-            ndim, ndim,
-            gridspec_kw=dict(wspace=CAP_MCMC_A4_CORNER_WHSPACE,
-                             hspace=CAP_MCMC_A4_CORNER_WHSPACE),
-        )
-
-        for mcmc, color in [(major, CAP_MAJOR_COLOR), (minor, CAP_MINOR_COLOR)]:
-            if mcmc is None:
-                continue
-            scaled_samples = np.asarray(mcmc['samples'], dtype=np.float64) * CAP_MCMC_DISPLAY_SCALE
-            scaled_truths = np.asarray(mcmc['beta_ml'], dtype=np.float64) * CAP_MCMC_DISPLAY_SCALE
-            corner.corner(
-                scaled_samples,
-                fig=cell,
-                labels=labels,
-                truths=scaled_truths,
-                truth_color=color,
-                quantiles=[0.16, 0.5, 0.84],
-                show_titles=False,
-                bins=35,
-                smooth=1.0,
-                smooth1d=1.0,
-                plot_datapoints=False,
-                fill_contours=False,
-                plot_density=False,
-                color=color,
-                hist_kwargs={'linewidth': 1.8},
-                levels=(0.393, 0.864),
-            )
-
-        _format_cap_mcmc_corner_axes(cell, ndim)
-
-        major_summary_scaled = None
-        if major is not None:
-            major_summary_scaled = {
-                k: np.asarray(v, dtype=np.float64) * CAP_MCMC_DISPLAY_SCALE
-                for k, v in major['summary'].items()
-            }
-        minor_summary_scaled = None
-        if minor is not None:
-            minor_summary_scaled = {
-                k: np.asarray(v, dtype=np.float64) * CAP_MCMC_DISPLAY_SCALE
-                for k, v in minor['summary'].items()
-            }
-
-        _set_cap_mcmc_corner_titles_overlay(
-            cell,
-            major_summary_scaled,
-            minor_summary_scaled,
-            names,
-            degree,
-            fontsize=CAP_MCMC_A4_TITLE_SIZE,
-        )
-
-        for ax in cell.axes:
-            ax.set_box_aspect(1)
-
-        cell.text(
-            CAP_MCMC_A4_MASSLABEL_X,
-            CAP_MCMC_A4_MASSLABEL_Y,
-            '$\\log_{10}\\!\\left(M_\\ast/M_\\odot\\right)$\n'
-            + f'$\\in({mass_lo:.1f},{mass_hi:.1f}]$',
-            ha='center',
-            va='center',
-            fontsize=CAP_MCMC_A4_MASSLABEL_SIZE,
-        )
-
-    legend_handles = [
-        Line2D([0], [0], color=CAP_MAJOR_COLOR, lw=2.0, label=CAP_MAJOR_SECTOR_LABEL),
-        Line2D([0], [0], color=CAP_MINOR_COLOR, lw=2.0, label=CAP_MINOR_SECTOR_LABEL),
-    ]
-    if legend_idx is not None:
-        cells[legend_idx].legend(
-            handles=legend_handles,
-            loc='center',
-            fontsize=CAP_LEGEND_SIZE_SECTOR,
-            frameon=True,
-        )
-    else:
-        fig.legend(
-            handles=legend_handles,
-            loc='upper right',
-            fontsize=CAP_LEGEND_SIZE_SECTOR,
-            frameon=True,
-        )
-    fig.suptitle(CAP_MCMC_A4_SUPTITLE, fontsize=CAP_MCMC_SUPTITLE_SIZE, y=CAP_MCMC_A4_SUPTITLE_Y)
-
-    path = os.path.join(out_dir, 'summary_oriented_sector_mcmc_corner_overlay_A4.pdf')
-    fig.savefig(path, dpi=SAVEFIG_DPI, bbox_inches='tight')
-    plt.close(fig)
-    print(f'  [summary MCMC corner overlay] {path}')
-    return [path]
-     
 def build_selection_and_cache():
     """Build the oriented sample without any stellar-age dependency."""
     if RADIO_ONLY and EXCLUDE_RADIO:
@@ -2155,7 +1618,7 @@ def build_selection_and_cache():
     print_mass_bin_accounting('oriented galaxies after stamp-valid cut', main_rows & valid_now, cache_logm_now, main_rows)
     print_mass_bin_accounting('radio galaxies before stamp-valid cut', radio_rows, cache_logm_now)
     print_mass_bin_accounting('radio galaxies after stamp-valid cut', radio_rows & valid_now, cache_logm_now, radio_rows)
-    return (h5f, base_fits_idx, radio_fits_idx)
+    return (h5f, base_fits_idx)
 
 def add_full_stack_results(h5f, bin_result, mass_mask):
     """Compute full mass bin stack and CAP quantities."""
@@ -2165,10 +1628,52 @@ def add_full_stack_results(h5f, bin_result, mass_mask):
     if result['n_success'] == 0:
         bin_result['full_stack'] = {'n_success': 0}
         return
-    cap_m, cap_s, cap_cov, n_cap = mean_profile_and_covariance(result['cap_full_values'], seed=SEED)
-    cap_maj_m, cap_maj_s, cap_maj_cov, _ = mean_profile_and_covariance(result['cap_major_values'], seed=SEED)
-    cap_min_m, cap_min_s, cap_min_cov, _ = mean_profile_and_covariance(result['cap_minor_values'], seed=SEED)
-    print(f'    full CAP profiles from {n_cap:,} galaxies')
+    cap_m, cap_s, cap_cov, n_cap = mean_profile_and_covariance(
+        result['cap_full_values'],
+        weights=result.get('weights'),
+        seed=SEED,
+    )
+    paired = paired_profile_bootstrap(
+        result['cap_major_values'],
+        result['cap_minor_values'],
+        weights=result.get('weights'),
+        seed=SEED,
+    )
+    cap_maj_m = paired['major_mean']
+    cap_maj_s = paired['major_std']
+    cap_maj_cov = paired['major_cov']
+    cap_min_m = paired['minor_mean']
+    cap_min_s = paired['minor_std']
+    cap_min_cov = paired['minor_cov']
+
+    # Metadata for the exact galaxy rows retained by the paired bootstrap.
+    # ``result['cache_indices']`` is aligned row-by-row with cap_major_values,
+    # cap_minor_values, and result['weights']; paired['valid_row_mask'] then
+    # removes any row excluded because of non-finite CAP values or bad weights.
+    selected_cache_indices = np.asarray(result['cache_indices'], dtype=np.int64)
+    paired_valid_rows = np.asarray(paired['valid_row_mask'], dtype=bool)
+    if paired_valid_rows.shape != (selected_cache_indices.size,):
+        raise ValueError(
+            'Paired-bootstrap valid-row mask is not aligned with selected cache rows: '
+            f'{paired_valid_rows.shape} versus {(selected_cache_indices.size,)}'
+        )
+    paired_cache_indices = selected_cache_indices[paired_valid_rows]
+    paired_weights = np.asarray(result['weights'], dtype=np.float64)[paired_valid_rows]
+    paired_logm = np.asarray(h5f['logm'][paired_cache_indices], dtype=np.float64)
+    paired_redshift = np.asarray(h5f['z'][paired_cache_indices], dtype=np.float64)
+    paired_fits_idx = np.asarray(h5f['fits_idx'][paired_cache_indices], dtype=np.int64)
+
+    n_meta = paired_cache_indices.size
+    if n_meta != paired['n_galaxies']:
+        raise ValueError(
+            'Export metadata count does not match paired-bootstrap galaxy count: '
+            f'{n_meta} versus {paired["n_galaxies"]}'
+        )
+
+    print(
+        f"    full CAP profiles from {n_cap:,} galaxies; "
+        f"paired sector bootstrap retained {paired['n_galaxies']:,}"
+    )
     print_cap_profile_mean_sd_table(
         mass_lo,
         mass_hi,
@@ -2177,24 +1682,34 @@ def add_full_stack_results(h5f, bin_result, mass_mask):
         cap_min_m,
         cap_min_s,
     )
-    bin_result['full_stack'] = {'n_success': result['n_success'], 'stack_unori': result['stack_unori'], 'stack_ori': result['stack_ori'], 'pixscale': result['pixscale'], 'cap_mean': cap_m, 'cap_std': cap_s, 'cap_cov': cap_cov, 'cap_major_mean': cap_maj_m, 'cap_major_std': cap_maj_s, 'cap_major_cov': cap_maj_cov, 'cap_minor_mean': cap_min_m, 'cap_minor_std': cap_min_s, 'cap_minor_cov': cap_min_cov, 'effective_mask': result['effective_mask']}
-    if RUN_CAP_MCMC:
-        full = bin_result['full_stack']
-        seed_bin = CAP_MCMC_SEED + int(round(10.0 * mass_lo))
-        print('    running major-sector CAP MCMC')
-        full['mcmc_major'] = run_quadratic_mcmc(cap_maj_m, cap_maj_cov, seed=seed_bin)
-        print('    running minor-sector CAP MCMC')
-        full['mcmc_minor'] = run_quadratic_mcmc(cap_min_m, cap_min_cov, seed=seed_bin + 1)
-
-def add_radio_stack_results(h5f, bin_result, mass_mask):
-    """Compute radio-only full mass bin stack."""
-    mass_lo = bin_result.get('mass_lo', np.nan)
-    mass_hi = bin_result.get('mass_hi', np.nan)
-    result = stack_from_cache(h5f, mass_mask, label=f'radio-only stack logM ({mass_lo:.1f}, {mass_hi:.1f}]')
-    if result['n_success'] == 0:
-        bin_result['radio_full_stack'] = {'n_success': 0}
-        return
-    bin_result['radio_full_stack'] = {'n_success': result['n_success'], 'stack_unori': result['stack_unori'], 'stack_ori': result['stack_ori'], 'pixscale': result['pixscale']}
+    bin_result['full_stack'] = {
+        'n_success': result['n_success'],
+        'stack_unori': result['stack_unori'],
+        'stack_ori': result['stack_ori'],
+        'pixscale': result['pixscale'],
+        'cap_mean': cap_m,
+        'cap_std': cap_s,
+        'cap_cov': cap_cov,
+        'cap_major_mean': cap_maj_m,
+        'cap_major_std': cap_maj_s,
+        'cap_major_cov': cap_maj_cov,
+        'cap_minor_mean': cap_min_m,
+        'cap_minor_std': cap_min_s,
+        'cap_minor_cov': cap_min_cov,
+        'cap_major_minor_cross_cov': paired['cross_cov'],
+        'cap_major_minor_joint_cov': paired['joint_cov'],
+        'cap_major_bootstrap': paired['major_bootstrap'],
+        'cap_minor_bootstrap': paired['minor_bootstrap'],
+        'cap_paired_n_galaxies': paired['n_galaxies'],
+        # Exact sample metadata used by the paired sector profiles.
+        'cap_paired_log10_stellar_mass': paired_logm,
+        'cap_paired_stellar_mass_msun': np.power(10.0, paired_logm),
+        'cap_paired_redshift': paired_redshift,
+        'cap_paired_weights': paired_weights,
+        'cap_paired_fits_idx': paired_fits_idx,
+        'cap_paired_cache_indices': paired_cache_indices,
+        'effective_mask': result['effective_mask'],
+    }
 
 def plot_summary_oriented_selected_ba_histograms(all_bin_results, h5f, out_dir):
     """Plot selected oriented-sample b/a distributions by mass bin."""
@@ -2246,17 +1761,234 @@ def plot_summary_oriented_selected_ba_histograms(all_bin_results, h5f, out_dir):
     plt.close(fig)
     print(f'  [summary histogram: selected b/a] {path}')
 
+
+def export_paired_sector_bootstraps(all_bin_results, out_dir):
+    """Write paired bootstrap products for all mass bins to NPZ and JSON.
+
+    NPZ profile arrays remain in the pipeline's internal unit, y arcmin^2.
+    Multiply them by ``display_scale`` stored in the file to reproduce the
+    numerical convention shown on the profile plots.
+    """
+    if not EXPORT_PAIRED_SECTOR_BOOTSTRAPS:
+        return []
+
+    os.makedirs(out_dir, exist_ok=True)
+    npz_path = os.path.join(out_dir, PAIRED_BOOTSTRAP_BASENAME + '.npz')
+    json_path = os.path.join(out_dir, PAIRED_BOOTSTRAP_BASENAME + '_manifest.json')
+
+    payload = {
+        **{key: np.asarray(value) for key, value in _cap_filter_metadata().items()},
+        'format_version': np.asarray(2, dtype=np.int64),
+        'theta_arcmin': np.asarray(CAP_RADII_ARCMIN, dtype=np.float64),
+        'mass_bins': np.asarray(MASS_BINS, dtype=np.float64),
+        'n_bootstrap_requested': np.asarray(N_BOOT, dtype=np.int64),
+        'bootstrap_seed': np.asarray(SEED, dtype=np.int64),
+        'display_scale': np.asarray(DISPLAY_Y_SCALE, dtype=np.float64),
+        'wedge_half_width_deg': np.asarray(WEDGE_HALF_DEG, dtype=np.float64),
+        'sector_angular_fraction_of_full_circle': np.asarray(
+            4.0 * WEDGE_HALF_DEG / 360.0,
+            dtype=np.float64,
+        ),
+        'sector_full_circle_rescale_factor': np.asarray(
+            360.0 / (4.0 * WEDGE_HALF_DEG),
+            dtype=np.float64,
+        ),
+        'sector_full_circle_rescale_applied': np.asarray(False),
+        'major_axis_angle_deg': np.asarray(MAJOR_AXIS_ANGLE, dtype=np.float64),
+        'minor_axis_angle_deg': np.asarray(MINOR_AXIS_ANGLE, dtype=np.float64),
+        'internal_unit': np.asarray('y arcmin^2'),
+        'display_unit': np.asarray('10^-6 y arcmin^2'),
+        'joint_vector_order': np.asarray(
+            '[major(theta_1..theta_N), minor(theta_1..theta_N)]'
+        ),
+        'bootstrap_pairing': np.asarray(
+            'row k uses the same galaxy-resampling draw for major and minor'
+        ),
+        'sample_metadata_alignment': np.asarray(
+            'within each bin, galaxy metadata arrays share one row ordering and '
+            'match the parent rows resampled to form both sector bootstraps'
+        ),
+        'stellar_mass_definition': np.asarray(
+            'Firefly Chabrier_MILES_stellar_mass; log10_stellar_mass is log10(M*/Msun)'
+        ),
+    }
+
+    manifest_bins = []
+    for i, bin_result in enumerate(all_bin_results):
+        mass_lo = float(bin_result.get('mass_lo', MASS_BINS[i][0]))
+        mass_hi = float(bin_result.get('mass_hi', MASS_BINS[i][1]))
+        full = bin_result.get('full_stack', {})
+
+        required = (
+            'cap_major_mean',
+            'cap_minor_mean',
+            'cap_major_bootstrap',
+            'cap_minor_bootstrap',
+            'cap_major_minor_joint_cov',
+            'cap_paired_log10_stellar_mass',
+            'cap_paired_stellar_mass_msun',
+            'cap_paired_redshift',
+            'cap_paired_weights',
+            'cap_paired_fits_idx',
+            'cap_paired_cache_indices',
+        )
+        if not isinstance(full, dict) or any(key not in full for key in required):
+            print(
+                f'  [paired bootstrap export] skipping mass bin '
+                f'({mass_lo:.1f}, {mass_hi:.1f}]: products unavailable'
+            )
+            continue
+
+        prefix = f'bin{i}'
+        major_boot = np.asarray(full['cap_major_bootstrap'], dtype=np.float64)
+        minor_boot = np.asarray(full['cap_minor_bootstrap'], dtype=np.float64)
+        major_mean = np.asarray(full['cap_major_mean'], dtype=np.float64)
+        minor_mean = np.asarray(full['cap_minor_mean'], dtype=np.float64)
+        joint_cov = np.asarray(full['cap_major_minor_joint_cov'], dtype=np.float64)
+        n_ap = len(CAP_RADII_ARCMIN)
+
+        if major_boot.shape != minor_boot.shape:
+            raise ValueError(
+                f'Paired bootstrap shape mismatch in mass bin {i}: '
+                f'{major_boot.shape} versus {minor_boot.shape}'
+            )
+        if major_boot.ndim != 2 or major_boot.shape[1] != n_ap:
+            raise ValueError(
+                f'Unexpected bootstrap shape in mass bin {i}: '
+                f'{major_boot.shape}; expected (N_boot, {n_ap})'
+            )
+        if joint_cov.shape != (2 * n_ap, 2 * n_ap):
+            raise ValueError(
+                f'Unexpected joint covariance shape in mass bin {i}: '
+                f'{joint_cov.shape}; expected {(2 * n_ap, 2 * n_ap)}'
+            )
+
+        payload[f'{prefix}_mass_lo'] = np.asarray(mass_lo, dtype=np.float64)
+        payload[f'{prefix}_mass_hi'] = np.asarray(mass_hi, dtype=np.float64)
+        payload[f'{prefix}_n_galaxies'] = np.asarray(
+            full.get('cap_paired_n_galaxies', full.get('n_success', -1)),
+            dtype=np.int64,
+        )
+        payload[f'{prefix}_major_mean'] = major_mean
+        payload[f'{prefix}_minor_mean'] = minor_mean
+        payload[f'{prefix}_major_std'] = np.asarray(full['cap_major_std'], dtype=np.float64)
+        payload[f'{prefix}_minor_std'] = np.asarray(full['cap_minor_std'], dtype=np.float64)
+        payload[f'{prefix}_major_bootstrap'] = major_boot
+        payload[f'{prefix}_minor_bootstrap'] = minor_boot
+        payload[f'{prefix}_major_covariance'] = np.asarray(
+            full['cap_major_cov'], dtype=np.float64
+        )
+        payload[f'{prefix}_minor_covariance'] = np.asarray(
+            full['cap_minor_cov'], dtype=np.float64
+        )
+        payload[f'{prefix}_major_minor_cross_covariance'] = np.asarray(
+            full['cap_major_minor_cross_cov'], dtype=np.float64
+        )
+        payload[f'{prefix}_joint_covariance'] = joint_cov
+
+        # Save the exact galaxy sample over which CAPPIBARAS should average its
+        # forward model. These arrays are row-aligned with one another and with
+        # the parent sample resampled to produce major_bootstrap/minor_bootstrap.
+        logm = np.asarray(full['cap_paired_log10_stellar_mass'], dtype=np.float64)
+        stellar_mass = np.asarray(full['cap_paired_stellar_mass_msun'], dtype=np.float64)
+        redshift = np.asarray(full['cap_paired_redshift'], dtype=np.float64)
+        stack_weights = np.asarray(full['cap_paired_weights'], dtype=np.float64)
+        fits_idx = np.asarray(full['cap_paired_fits_idx'], dtype=np.int64)
+        cache_indices = np.asarray(full['cap_paired_cache_indices'], dtype=np.int64)
+
+        n_galaxies = int(payload[f'{prefix}_n_galaxies'].item())
+        metadata_arrays = {
+            'log10_stellar_mass': logm,
+            'stellar_mass_msun': stellar_mass,
+            'redshift': redshift,
+            'stack_weight': stack_weights,
+            'fits_idx': fits_idx,
+            'cache_index': cache_indices,
+        }
+        for metadata_name, values in metadata_arrays.items():
+            if values.shape != (n_galaxies,):
+                raise ValueError(
+                    f'Unexpected {metadata_name} shape in mass bin {i}: '
+                    f'{values.shape}; expected {(n_galaxies,)}'
+                )
+            payload[f'{prefix}_{metadata_name}'] = values
+
+        manifest_bins.append({
+            'index': i,
+            'mass_interval': f'({mass_lo:.1f}, {mass_hi:.1f}]',
+            'n_galaxies': int(payload[f'{prefix}_n_galaxies'].item()),
+            'n_bootstrap_saved': int(major_boot.shape[0]),
+            'n_apertures': int(major_boot.shape[1]),
+            'npz_prefix': prefix,
+            'sample_metadata_keys': [
+                f'{prefix}_log10_stellar_mass',
+                f'{prefix}_stellar_mass_msun',
+                f'{prefix}_redshift',
+                f'{prefix}_stack_weight',
+                f'{prefix}_fits_idx',
+                f'{prefix}_cache_index',
+            ],
+            'sample_metadata_row_alignment': (
+                'All listed arrays have one entry per retained galaxy in the same '
+                'order; this is the parent sample resampled for both sector bootstraps.'
+            ),
+        })
+
+    if len(manifest_bins) == 0:
+        print('  [paired bootstrap export] no valid mass-bin products to save')
+        return []
+
+    np.savez_compressed(npz_path, **payload)
+
+    manifest = {
+        **_cap_filter_metadata(),
+        'format_version': 2,
+        'npz_file': os.path.basename(npz_path),
+        'internal_unit': 'y arcmin^2',
+        'display_scale': float(DISPLAY_Y_SCALE),
+        'display_unit': '10^-6 y arcmin^2',
+        'theta_arcmin': np.asarray(CAP_RADII_ARCMIN, dtype=float).tolist(),
+        'mass_bins': np.asarray(MASS_BINS, dtype=float).tolist(),
+        'wedge_half_width_deg': float(WEDGE_HALF_DEG),
+        'sector_angular_fraction_of_full_circle': float(4.0 * WEDGE_HALF_DEG / 360.0),
+        'sector_full_circle_rescale_factor': float(360.0 / (4.0 * WEDGE_HALF_DEG)),
+        'sector_full_circle_rescale_applied': False,
+        'joint_vector_order': '[major(theta_1..theta_N), minor(theta_1..theta_N)]',
+        'bootstrap_pairing': (
+            'Each saved row k uses one common bootstrap resampling of galaxies '
+            'for both the major- and minor-axis profiles.'
+        ),
+        'sample_metadata_alignment': (
+            'For each bin, log10 stellar mass, linear stellar mass, redshift, stack '
+            'weight, fits_idx, and cache_index are saved for the exact retained '
+            'galaxies and share one row ordering.'
+        ),
+        'stellar_mass_definition': (
+            'Firefly Chabrier_MILES_stellar_mass; log10_stellar_mass is '
+            'log10(M*/Msun).'
+        ),
+        'bins': manifest_bins,
+    }
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(manifest, f, indent=2)
+
+    print(f'  [paired bootstrap export] {npz_path}')
+    print(f'  [paired bootstrap manifest] {json_path}')
+    return [npz_path, json_path]
+
+
 def main():
+    _validate_cap_filter(CAP_RADII_ARCMIN, CAP_INNER_CUT_ARCMIN)
     os.makedirs(SUMMARY_DIR, exist_ok=True)
     print('=' * 70)
     print('ORIENTED-STACK STANDALONE PIPELINE')
     print('  Stellar-age procedures: NOT PRESENT')
     print(f'  Summary path: {SUMMARY_DIR}')
     print(f'  Oriented cache: {CACHE_FILE}')
+    print(f'  Liu ring-ring filter: inner cutoff={CAP_INNER_CUT_ARCMIN:g} arcmin; outer weight=-N_inner/N_outer')
     print('  Dust cut: OFF')
     print('  photoPosPlate cross-match: ON')
     print(f'  Axis-ratio cut: 0 < b/a < {BA_MAX}')
-    print(f"  CAP MCMC: {('ON' if RUN_CAP_MCMC else 'OFF')}")
     if RADIO_ONLY:
         print(f'  Radio selection: REQUIRE FIRST match within {FIRST_MATCH_ARCSEC:.0f} arcsec')
     elif EXCLUDE_RADIO:
@@ -2264,13 +1996,12 @@ def main():
     else:
         print('  Radio selection: no cut')
     print('=' * 70)
-    h5f, base_fits_idx, radio_fits_idx = build_selection_and_cache()
+    h5f, base_fits_idx = build_selection_and_cache()
     try:
         cache_stamp_valid = h5f['stamp_valid'][:]
         cache_logm = h5f['logm'][:]
         cache_fits_idx = h5f['fits_idx'][:]
         in_main = np.isin(cache_fits_idx, base_fits_idx)
-        in_radio = np.isin(cache_fits_idx, radio_fits_idx)
         all_bin_results = []
         for mass_lo, mass_hi in MASS_BINS:
             print('\n' + '=' * 70)
@@ -2278,34 +2009,31 @@ def main():
             print('=' * 70)
             in_mass = _mass_bin_mask(cache_logm, mass_lo, mass_hi)
             main_mask = in_main & in_mass
-            radio_mask = in_radio & in_mass
             bin_result = {'mass_lo': mass_lo, 'mass_hi': mass_hi}
             if np.any(main_mask & cache_stamp_valid):
                 add_full_stack_results(h5f, bin_result, main_mask)
             else:
                 bin_result['full_stack'] = {'n_success': 0}
-            if np.any(radio_mask & cache_stamp_valid):
-                add_radio_stack_results(h5f, bin_result, radio_mask)
-            else:
-                bin_result['radio_full_stack'] = {'n_success': 0}
             all_bin_results.append(bin_result)
+        paired_bootstrap_paths = export_paired_sector_bootstraps(
+            all_bin_results,
+            SUMMARY_DIR,
+        )
         print('\nWriting oriented-stack products...')
         stack_norm = _shared_stack_norm(_collect_stack_values_from_results(all_bin_results))
         plot_summary_full_mass_stacks(all_bin_results, SUMMARY_DIR, stack_norm)
         plot_summary_sector_cap_profiles(all_bin_results, SUMMARY_DIR)
         plot_summary_sector_cap_correlation(all_bin_results, SUMMARY_DIR)
-        plot_summary_sector_posterior_curves(all_bin_results, SUMMARY_DIR)
-        corner_pdf_paths = plot_cap_mcmc_corner_pdf(all_bin_results, SUMMARY_DIR)
-        plot_summary_radio_full_stacks(all_bin_results, SUMMARY_DIR, stack_norm)
         plot_summary_oriented_selected_ba_histograms(all_bin_results, h5f, SUMMARY_DIR)
-        print_cap_mcmc_fit_tables(all_bin_results)
     finally:
         h5f.close()
     print('\nDone. PDFs written by this pipeline:')
     for pdf_name in ORIENTED_PDF_NAMES:
         print(f'  {pdf_name}')
-    for pdf_path in corner_pdf_paths:
-        print(f'  {os.path.basename(pdf_path)}')
+    if paired_bootstrap_paths:
+        print('Paired bootstrap files for downstream modeling:')
+        for export_path in paired_bootstrap_paths:
+            print(f'  {export_path}')
 
 
 if __name__ == "__main__":
