@@ -2,10 +2,10 @@
 
 Python pipeline for oriented stacking of ACT Compton-y map cutouts around massive galaxies. The code aligns each galaxy by its optical position angle, measures the stacked signal along the projected major and minor axes, and computes sector-based ring-ring CAP profiles with bootstrap covariance estimates.
 
-ThumbStack was used in the following publication:
+This pipeline was used in the following publication:
+
 
 ## Overview
-
 The pipeline:
 
 1. loads the FIREFLY galaxy catalog;
@@ -18,7 +18,7 @@ The pipeline:
 8. extracts and caches Compton-$y$ thumbnails;
 9. rotates each thumbnail so that the projected galaxy major axis is vertical;
 10. stacks the unoriented and oriented thumbnails in stellar-mass bins;
-11. measures major- and minor-axis CAP profiles in $\pm15^\circ$ sectors;
+11. measures major- and minor-axis CAP profiles in angular sectors;
 12. estimates profile uncertainties and covariances with bootstrap resampling;
 13. writes figures and paired-bootstrap products for downstream modeling.
 
@@ -38,7 +38,6 @@ The file paths are set near the top of `oriented_stacking.py`.
 - **FIRST catalog**  
   https://sundog.stsci.edu/first/catalogs/readme_14dec17.html
 
-The current configuration uses the ACT DR6.02 NILC Compton-$y$ map with CIB deprojection parameters $\beta=1.2$ and $T_{\rm dust}=24\,$K.
 
 ## Dependencies
 
