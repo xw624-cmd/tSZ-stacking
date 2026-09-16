@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Oriented tSZ stacking pipeline."""
+"""Oriented stacking of ACT-Planck Compton-y cutouts around SDSS galaxies."""
 
 import os
 import time
@@ -34,18 +34,20 @@ plt.rcParams.update({
 })
 
 
-# ============================================================
-# CONFIGURATION
-# ============================================================
+# Configuration
 
-
+#https://data.sdss.org/sas/dr16/eboss/spectro/firefly/v1_1_0/
 FIREFLY_PATH = '/Users/jerrywang/Documents/Battaglia_research/Project1/Catalogs/sdss_firefly-26.fits'
 
+#https://www.sdss4.org/dr17/spectro/spectro_access/
 PHOTO_PATH = '/Users/jerrywang/Documents/Battaglia_research/Project1/Catalogs/photoPosPlate-dr17.fits'
 
+#https://lambda.gsfc.nasa.gov/product/act/act_dr6.02/act_dr6.02_nilc_get.html
 TSZ_MAP_PATH = '/Users/jerrywang/Documents/Battaglia_research/Project1/Catalogs/act-planck_dr6.02_nilc_ComptonY_deproj_cib_1.2_24.0.fits'
 
+#https://sundog.stsci.edu/first/catalogs/readme_14dec17.html
 FIRST_PATH = '/Users/jerrywang/Documents/Battaglia_research/Project1/Catalogs/first_14dec17.fits'
+
 
 FIREFLY_CLASS_FIELD = 'CLASS'
 
@@ -73,7 +75,7 @@ CAP_AP_MAX_ARCMIN = 8.0
 
 CAP_RADII_ARCMIN = np.linspace(CAP_AP_MIN_ARCMIN, CAP_AP_MAX_ARCMIN, CAP_N_AP)
 
-# Liu et al., Eq. (A1): exclude theta <= theta_0 from every aperture.
+# Inner cutoff for the ring-ring CAP filter.
 CAP_INNER_CUT_ARCMIN = 1.0
 
 MASS_BINS = [(11.0, 11.4), (11.4, 11.7), (11.7, 12.0)]
@@ -108,7 +110,7 @@ RUN_BOOTSTRAP = True
 
 N_BOOT = 10000
 
-# Export paired major/minor bootstrap realizations for downstream modeling.
+# Save paired sector bootstraps for downstream profile fitting.
 EXPORT_PAIRED_SECTOR_BOOTSTRAPS = True
 PAIRED_BOOTSTRAP_BASENAME = 'paired_sector_cap_bootstraps'
 
@@ -184,11 +186,6 @@ STACK_FULL_N_LABEL_SIZE = 10
 STACK_FULL_ROW_LABEL_SIZE = 16
 
 
-
-
-
-
-
 STACK_FULL_FIG_WIDTH_PER_COL = 4.0
 
 STACK_FULL_FIG_HEIGHT_PER_ROW = 3.75
@@ -206,13 +203,6 @@ STACK_FULL_CBAR_BOTTOM = 0.18
 STACK_FULL_CBAR_HEIGHT = 0.62
 
 STACK_FULL_SUPTITLE_Y = 0.96
-
-
-
-
-
-
-
 
 
 CAP_FIG_WIDTH_PER_COL = 6.35
@@ -376,35 +366,28 @@ CACHE_FILE = os.path.join(CACHE_DIR, 'stamps.h5')
 ORIENTED_PDF_NAMES = ['summary_oriented_full_stack_2x3.pdf', 'summary_oriented_full_stack_cap_profiles_1x3.pdf', 'summary_oriented_sector_cap_correlation_2x3.pdf', 'summary_oriented_hist_ba_selected_1x3.pdf']
 
 
-# ============================================================
-# PIPELINE FUNCTIONS
-# ============================================================
+# Analysis functions
 
 def _savefig(path):
-    """Save figures using centralized trimming settings."""
+    """Save a figure with the common output settings."""
     plt.savefig(path, dpi=SAVEFIG_DPI, bbox_inches=SAVEFIG_BBOX_INCHES, pad_inches=SAVEFIG_PAD_INCHES)
 
 def _fmt_pct(n, d):
-    """Format n/d as a percentage string."""
+    """Format a ratio as a percentage."""
     if d == 0:
         return 'nan%'
     return f'{100.0 * n / d:.2f}%'
 
 def _mass_bin_mask(logm, mass_lo, mass_hi):
-    """Mass bin mask using nonoverlapping bins: mass_lo < logM <= mass_hi."""
+    """Select a stellar-mass bin using mass_lo < logM <= mass_hi."""
     return np.isfinite(logm) & (logm > mass_lo) & (logm <= mass_hi)
 
 def _mass_bin_mask_for_accounting(logm, mass_lo, mass_hi):
-    """Mass bin mask used only for printed accounting."""
+    """Mass-bin mask used for sample-count reporting."""
     return _mass_bin_mask(logm, mass_lo, mass_hi)
 
 def print_mass_bin_accounting(label, mask, logm, previous_mask=None, indent='  '):
-    """
-    Print total and per mass bin counts for a Boolean mask.
-
-    If previous_mask is provided, also print how many objects were lost
-    relative to that previous cumulative stage.
-    """
+    """Print total and per-bin sample counts, optionally relative to a previous cut."""
     mask = np.asarray(mask, dtype=bool)
     logm = np.asarray(logm)
     total = int(np.sum(mask))
@@ -426,15 +409,7 @@ def print_mass_bin_accounting(label, mask, logm, previous_mask=None, indent='  '
             print(f'{indent}  logM ({mass_lo:.1f}, {mass_hi:.1f}]: {n_bin:,} (lost {lost_bin:,}, kept {_fmt_pct(n_bin, prev_bin)})')
 
 def print_cumulative_cut_table(stages, logm, final_label=None, mass_bins=MASS_BINS):
-    """Print a compact cumulative selection table.
-
-    stages : list of (label, cumulative_boolean_mask). Each mask is the
-        running survivor set up to and including that stage, defined on the
-        full Firefly row array. "Total" is the mask sum; the mass-bin columns
-        split that survivor set by stellar mass.
-    logm : per-row log10 stellar mass, used only for the mass-bin split.
-    final_label : if given, repeat the last stage's mask under this label.
-    """
+    """Print cumulative sample counts after each selection cut."""
     logm = np.asarray(logm)
     bin_masks = [_mass_bin_mask(logm, lo, hi) for lo, hi in mass_bins]
     bin_headers = [f'({lo:.1f},{hi:.1f}]' for lo, hi in mass_bins]
@@ -461,21 +436,17 @@ def print_cumulative_cut_table(stages, logm, final_label=None, mass_bins=MASS_BI
         _row(final_label, stages[-1][1])
 
 def _cap_to_plot_units(values):
-    """CAP values are already in y arcmin^2."""
+    """Return CAP values in the plotting units, y arcmin^2."""
     if values is None:
         return None
     return np.asarray(values, dtype=np.float64)
 
 def _cap_plot_axis_label():
-    """CAP axis label for the y arcmin^2 convention."""
+    """Return the CAP y-axis label."""
     return CAP_Y_LABEL
 
 def print_cap_profile_mean_sd_table(mass_lo, mass_hi, major_mean, major_std, minor_mean, minor_std):
-    """Print the nine plotted major/minor CAP means and bootstrap SDs.
-
-    Values are multiplied by ``DISPLAY_Y_SCALE`` so the numbers use the same
-    10^{-6} convention shown on the CAP-profile plot axis.
-    """
+    """Print the plotted major- and minor-axis CAP means and bootstrap errors."""
     arrays = [major_mean, major_std, minor_mean, minor_std]
     if any(values is None for values in arrays):
         print('    [CAP profile table] unavailable: one or more profile arrays are missing')
@@ -514,11 +485,11 @@ def print_cap_profile_mean_sd_table(mass_lo, mass_hi, major_mean, major_std, min
         )
 
 def _cap_pixel_area_arcmin2(pixscale_arcmin):
-    """Projected local cutout pixel area in arcmin^2."""
+    """Return the local cutout pixel area in arcmin^2."""
     return float(pixscale_arcmin) ** 2
 
 def _write_cap_area_metadata(h5f, pixscale_arcmin):
-    """Store CAP unit metadata in the HDF5 cache."""
+    """Store CAP unit and pixel-area metadata in the cache."""
     h5f.attrs['cap_pixel_area_arcmin2'] = _cap_pixel_area_arcmin2(pixscale_arcmin)
     h5f.attrs['cap_internal_unit'] = 'y_arcmin2'
     h5f.attrs['cap_plot_unit'] = 'yarcmin2'
@@ -526,23 +497,15 @@ def _write_cap_area_metadata(h5f, pixscale_arcmin):
     h5f.flush()
 
 def _centered_pixel_axis(n, pixscale_arcmin):
-    """Pixel-center coordinates in arcmin, centered on zero."""
+    """Return pixel-center coordinates in arcmin, centered on zero."""
     return (np.arange(n, dtype=np.float64) - 0.5 * (n - 1)) * float(pixscale_arcmin)
 
 def sample_large_stamp_to_output(source_stamp, angle_deg, out_ny, out_nx, out_pixscale_arcmin, source_radius_arcmin=STAMP_SOURCE_RADIUS_ARCMIN, fill_value=0.0):
-    """Sample a larger source thumbnail onto the final output grid.
+    """Rotate and resample a source thumbnail onto the final Cartesian grid.
 
-    This is the coordinate-remapping version of rotation, close to the
-    oriented_superclustering/ThumbStack pattern:
-
-        1. keep the final output grid fixed,
-        2. rotate output coordinates backward into the larger source thumbnail,
-        3. bilinearly interpolate the source thumbnail at those coordinates.
-
-    angle_deg follows scipy.ndimage.rotate semantics: positive values rotate
-    the image counterclockwise.  The interpolation is linear because
-    RectBivariateSpline is used with kx=1, ky=1.
-    """
+    The output coordinates are mapped back into the source thumbnail and
+    evaluated with bilinear interpolation. Positive angles rotate the image
+    counterclockwise."""
     src = np.asarray(source_stamp, dtype=np.float64)
     src_ny, src_nx = src.shape
     src_pixscale_y = 2.0 * float(source_radius_arcmin) / (src_ny - 1)
@@ -565,13 +528,7 @@ def sample_large_stamp_to_output(source_stamp, angle_deg, out_ny, out_nx, out_pi
     return out.astype(np.float64)
 
 def mean_profile_and_covariance(profiles, weights=None, seed=SEED):
-    """
-    Mean CAP profile plus bootstrap covariance on the mean.
-
-    If weights is None, this is the original unweighted calculation.
-    If weights is supplied, the mean is a weighted mean and the bootstrap
-    resamples galaxies with their corresponding weights.
-    """
+    """Return the weighted mean CAP profile and bootstrap covariance."""
     profiles = np.asarray(profiles, dtype=np.float64)
     n_ap = profiles.shape[1]
     valid = np.all(np.isfinite(profiles), axis=1)
@@ -606,12 +563,9 @@ def mean_profile_and_covariance(profiles, weights=None, seed=SEED):
 
 
 def paired_profile_bootstrap(major_profiles, minor_profiles, weights=None, seed=SEED):
-    """Jointly bootstrap paired major- and minor-axis CAP profiles.
+    """Bootstrap major- and minor-axis profiles with the same galaxy resamples.
 
-    Each row of ``major_profiles`` and ``minor_profiles`` must refer to the
-    same galaxy. A single bootstrap index draw is applied to both arrays,
-    preserving the major--minor cross-covariance needed by a joint likelihood.
-    """
+    Using common resamples preserves the cross-covariance between sectors."""
     major_profiles = np.asarray(major_profiles, dtype=np.float64)
     minor_profiles = np.asarray(minor_profiles, dtype=np.float64)
 
@@ -708,13 +662,13 @@ def paired_profile_bootstrap(major_profiles, minor_profiles, weights=None, seed=
     }
 
 def make_angle_map(ny, nx):
-    """Angle from stamp center: 0 is right, 90 is up."""
+    """Return pixel-center polar angles in degrees (0 right, 90 up)."""
     cy, cx = (ny // 2, nx // 2)
     y, x = np.mgrid[:ny, :nx]
     return (np.degrees(np.arctan2(y - cy, x - cx)) % 360.0).astype(np.float64)
 
 def sector_mask(angle_map, center_deg, half_width_deg):
-    """Boolean mask for a bidirectional wedge."""
+    """Return the mask for two opposite wedges centered on center_deg."""
     mask = np.zeros_like(angle_map, dtype=bool)
     for c in [center_deg % 360.0, (center_deg + 180.0) % 360.0]:
         lo = (c - half_width_deg) % 360.0
@@ -726,7 +680,7 @@ def sector_mask(angle_map, center_deg, half_width_deg):
     return mask
 
 def _validate_cap_filter(cap_radii_arcmin, inner_cut_arcmin):
-    """Require a nonempty positive ring for every requested aperture."""
+    """Validate the CAP aperture radii and inner cutoff."""
     radii = np.asarray(cap_radii_arcmin, dtype=np.float64)
     if not np.isfinite(inner_cut_arcmin) or inner_cut_arcmin < 0:
         raise ValueError('CAP_INNER_CUT_ARCMIN must be finite and nonnegative')
@@ -736,7 +690,7 @@ def _validate_cap_filter(cap_radii_arcmin, inner_cut_arcmin):
     return radii
 
 def _cap_filter_metadata():
-    """Record the window needed to reproduce the data in a forward model."""
+    """Return metadata describing the CAP window used in the measurement."""
     return {
         'cap_filter_type': 'liu_ring_ring_eq_A1_pixel_area_corrected',
         'cap_inner_cut_arcmin': float(CAP_INNER_CUT_ARCMIN),
@@ -749,16 +703,11 @@ def _cap_filter_metadata():
 
 def compute_cap_values(image, r_map, pixscale, cap_radii_arcmin, pixel_area,
                        sec_mask=None, inner_cut_arcmin=None):
-    """Liu ring-ring photometry, Eq. (A1), sampled at pixel centers.
+    """Apply the Liu et al. ring-ring CAP filter to one cutout.
 
-    The returned CAP values are in y arcmin^2. Pixell/reproject handles
-    the map projection during thumbnail extraction; this routine then works
-    on the local projected cutout with pixel_area = pixscale_arcmin^2.
-
-    Boundaries follow Eq. (A1). Inner weights are +1; outer weights are
-    -N_inner/N_outer using finite pixel counts in the selected regions.
-    This corrects discrete area differences so a constant background cancels.
-    """
+    Pixel centers determine radial and sector membership. The outer annulus
+    is rescaled by N_inner/N_outer so the discrete filter integrates to zero.
+    The returned values are in y arcmin^2."""
     if inner_cut_arcmin is None:
         inner_cut_arcmin = CAP_INNER_CUT_ARCMIN
     cap_radii_arcmin = _validate_cap_filter(cap_radii_arcmin, inner_cut_arcmin)
@@ -781,7 +730,7 @@ def compute_cap_values(image, r_map, pixscale, cap_radii_arcmin, pixel_area,
     return cap
 
 def full_stamp_inside_map(ra_deg, dec_deg, emap, STAMP_SOURCE_RADIUS_ARCMIN):
-    """Check that the full thumbnail footprint stays inside the map."""
+    """Check whether the source thumbnail footprint lies inside the map."""
     dec_rad = np.deg2rad(dec_deg)
     ra_rad = np.deg2rad(ra_deg)
     r_rad = np.full(len(ra_deg), np.deg2rad(STAMP_SOURCE_RADIUS_ARCMIN / 60.0))
@@ -795,7 +744,7 @@ def full_stamp_inside_map(ra_deg, dec_deg, emap, STAMP_SOURCE_RADIUS_ARCMIN):
     return keep
 
 def _normalize_fits_text(values):
-    """Return an uppercase, whitespace-stripped Unicode FITS text column."""
+    """Normalize a FITS text column to stripped uppercase strings."""
     values = np.asarray(values)
     if values.dtype.kind == 'S':
         text = np.char.decode(values, 'utf-8', errors='ignore')
@@ -804,7 +753,7 @@ def _normalize_fits_text(values):
     return np.char.upper(np.char.strip(text))
 
 def load_firefly_full(filepath, class_field=FIREFLY_CLASS_FIELD, galaxy_class=FIREFLY_GALAXY_CLASS):
-    """Load only the Firefly columns needed by the oriented pipeline."""
+    """Load the FIREFLY columns used by the oriented-stacking analysis."""
     with fits.open(filepath, memmap=True) as hdu:
         data = hdu[1].data
         n_rows = len(data)
@@ -825,11 +774,10 @@ def load_firefly_full(filepath, class_field=FIREFLY_CLASS_FIELD, galaxy_class=FI
     return (ra, dec, log_mstar, z, fits_idx, is_galaxy)
 
 def load_photo_shapes(firefly_ra, firefly_dec, photo_path, match_arcsec=1.0, fracdev_thresh=0.5, type_galaxy=3, safety=1):
-    """Cross match to SDSS photometric catalog for PA and axis ratio.
+    """Cross-match FIREFLY galaxies to SDSS photoPosPlate shape measurements.
 
-    Returns both the selected shape used for oriented stacking and the
-    de Vaucouleurs/exponential model quantities needed for diagnostics.
-    """
+    The r-band de Vaucouleurs fit is used when fracDeV > fracdev_thresh;
+    otherwise the exponential fit is used."""
     print(f'  Loading photo catalog: {photo_path}')
     with fits.open(photo_path, memmap=True) as hdu:
         photo = hdu[1].data
@@ -883,7 +831,7 @@ def load_photo_shapes(firefly_ra, firefly_dec, photo_path, match_arcsec=1.0, fra
     return (pa_out, ab_out, valid_shape, pa_dev_out, pa_exp_out, ab_dev_out, ab_exp_out, fracdev_out)
 
 def crossmatch_to_first(ra, dec, first_path, match_arcsec, safety=1):
-    """Return a mask for galaxies with a nearby FIRST galaxy source."""
+    """Flag galaxies with a FIRST galaxy-class source within match_arcsec."""
     print('  Loading FIRST catalog...')
     with fits.open(first_path, memmap=True) as hdu:
         f = hdu[1].data
@@ -1029,12 +977,10 @@ def extract_to_cache(comptony, h5f):
     print(f'  [extract] Shape mismatches encountered: {n_shape_mismatch:,}')
 
 def stack_from_cache(h5f, mask, label='', weights=None):
-    """Stack for a selected mask, optionally using per-galaxy weights.
+    """Build unoriented and oriented stacks for a selected galaxy sample.
 
-    Cached stamps are larger source thumbnails.  Each selected source
-    thumbnail is sampled onto the final output grid, once with angle 0 for
-    the unoriented stack and once with -PA for the oriented stack.
-    """
+    The same cached thumbnail is sampled at 0 degrees and at -PA. Per-galaxy
+    full, major-axis, and minor-axis CAP measurements are returned with the stacks."""
     ny = int(h5f.attrs['ny'])
     nx = int(h5f.attrs['nx'])
     stamp_valid = h5f['stamp_valid'][:]
@@ -1116,9 +1062,7 @@ def stack_from_cache(h5f, mask, label='', weights=None):
         'cap_major_values': cap_major_values,
         'cap_minor_values': cap_minor_values,
         'effective_mask': effective_mask,
-        # Exact cache rows corresponding, in order, to the per-galaxy CAP arrays.
-        # This makes it possible to export the same galaxies' masses, redshifts,
-        # weights, and catalog IDs for CAPPIBARAS sample averaging.
+        # Cache-row order matches the per-galaxy CAP arrays.
         'cache_indices': np.asarray(indices, dtype=np.int64),
     }
 
@@ -1127,10 +1071,7 @@ def _visible_tex_minus():
 
 
 def _latex_visible_minus_number(value, precision=3, zero_tol=1e-12):
-    """Return a LaTeX math-mode number using the visible minus glyph.
-
-    See _visible_tex_minus for why the ordinary math minus is avoided.
-    """
+    """Format a number for LaTeX using a visible minus glyph."""
     if not np.isfinite(value):
         return ''
     value = float(value)
@@ -1145,30 +1086,22 @@ def _latex_visible_minus_number(value, precision=3, zero_tol=1e-12):
     return f'${sign}{body}$'
 
 def _tex_scaled_tick(x, pos=None):
-    """Format tick values after scaling by DISPLAY_Y_SCALE.
-
-    The plotted data remain in their original units.  Only the tick labels
-    are multiplied by 1e6, while the axis/colorbar labels carry the 10^{-6}
-    factor.
-    """
+    """Format CAP ticks in units of 10^-6."""
     return _latex_visible_minus_number(x * DISPLAY_Y_SCALE, precision=3)
 
 def _tex_unscaled_tick(x, pos=None):
-    """Format ordinary stacked-map x/y ticks with visible minus signs."""
+    """Format unscaled map-coordinate ticks."""
     return _latex_visible_minus_number(x, precision=3)
 
 
 def _apply_scientific_y_ticks(ax, nbins=CAP_Y_TICK_NBINS):
-    """Apply scaled CAP y-axis tick labels.
-
-    Function name is kept unchanged so existing plotting calls still work.
-    """
+    """Apply the CAP y-axis tick formatter."""
     ax.yaxis.set_major_locator(MaxNLocator(nbins=nbins))
     ax.yaxis.set_major_formatter(FuncFormatter(_tex_scaled_tick))
     ax.yaxis.get_offset_text().set_visible(False)
 
 def _shared_cap_ylim(mean_err_pairs, pad_frac=0.08):
-    """Return shared y limits including error bars and zero."""
+    """Return common y-limits that include all error bars and zero."""
     vals = [np.array([0.0])]
     for mean, err in mean_err_pairs:
         if mean is None or err is None:
@@ -1203,13 +1136,7 @@ def _format_colorbar(cb, label):
     cb.ax.set_title(STACK_COLORBAR_EXPONENT_LABEL, fontsize=STACK_COLORBAR_EXPONENT_SIZE, pad=STACK_COLORBAR_EXPONENT_PAD)
 
 def _set_touching_square_grid(fig, axes, left, bottom, top):
-    """Position image axes as a touching grid with square panels.
-
-    This prevents imshow panels from leaving horizontal gutters when the
-    figure is wider than the square image grid requires.  Returns the
-    right edge of the grid in figure coordinates, useful for placing a
-    close colorbar.
-    """
+    """Arrange image panels as a touching grid of square axes."""
     axes = np.asarray(axes)
     if axes.ndim != 2:
         raise ValueError('axes must be a 2D array')
@@ -1225,23 +1152,23 @@ def _set_touching_square_grid(fig, axes, left, bottom, top):
     return left + ncols * panel_w
 
 def _prune_touching_x_ticks(ax, nbins=HIST_X_TICK_NBINS):
-    """Avoid overlapping tick labels at zero-spacing panel boundaries."""
+    """Prune x ticks at touching panel boundaries."""
     ax.xaxis.set_major_locator(MaxNLocator(nbins=nbins, prune='both'))
 
 def _prune_touching_xy_ticks(ax):
-    """Set fixed x/y ticks for stacked image panels, with visible minus signs."""
+    """Set fixed x and y ticks for stacked-map panels."""
     ax.set_xticks(STACK_XY_TICKS)
     ax.set_yticks(STACK_XY_TICKS)
     ax.xaxis.set_major_formatter(FuncFormatter(_tex_unscaled_tick))
     ax.yaxis.set_major_formatter(FuncFormatter(_tex_unscaled_tick))
 
 def _set_hist_ylabel(ax, label):
-    """Set histogram y-label with centralized label coordinates."""
+    """Set the histogram y-axis label and position."""
     ax.set_ylabel(label, fontsize=HIST_AXIS_LABEL_SIZE)
     ax.yaxis.set_label_coords(HIST_YLABEL_X, HIST_YLABEL_Y)
 
 def _set_cap_ylabel(ax, label, fontsize):
-    """Set CAP-profile y-label with centralized label coordinates."""
+    """Set the CAP y-axis label and position."""
     ax.set_ylabel(label, fontsize=fontsize)
     ax.yaxis.set_label_coords(CAP_YLABEL_X, CAP_YLABEL_Y)
 
@@ -1253,7 +1180,7 @@ def _n_stacked_label(n_success):
     return N_STACKED_LABEL_TEMPLATE.format(n_stacked=int(n_success))
 
 def _collect_stack_values_from_results(all_bin_results):
-    """Collect main unoriented/oriented stack pixels for a shared color scale."""
+    """Collect main stacked-map pixels for a common color scale."""
     chunks = []
     for bin_result in all_bin_results:
         result = bin_result.get('full_stack', {})
@@ -1268,9 +1195,7 @@ def _collect_stack_values_from_results(all_bin_results):
     return chunks
 
 def _shared_stack_norm(finite_chunks):
-    """Use the full dynamic range of all stacked-map pixels.
-    The colorbar is symmetric around zero.
-    """
+    """Return a symmetric color normalization from the stacked-map percentiles."""
     if len(finite_chunks) == 0:
         return None
     vals = np.concatenate(finite_chunks)
@@ -1303,7 +1228,7 @@ def _imshow_stack_panel(ax, stack, pixscale, norm, n_success=None, axis_label_si
     return im
 
 def plot_summary_full_mass_stacks(all_bin_results, out_dir, stack_norm):
-    """Two rows by three columns: full mass bin unoriented and oriented."""
+    """Plot unoriented and oriented stacks for all stellar-mass bins."""
     if len(all_bin_results) == 0:
         return
     nrows = 2
@@ -1347,11 +1272,7 @@ def plot_summary_full_mass_stacks(all_bin_results, out_dir, stack_norm):
     print(f'  [summary full stacks] {path}')
 
 def _cov_to_correlation(cov):
-    """Normalize a bootstrap covariance matrix into a correlation matrix.
-
-    Guards zero/degenerate variance entries (returns NaN there instead of
-    dividing by zero) and forces the diagonal to exactly 1.0.
-    """
+    """Convert a covariance matrix to a correlation matrix."""
     cov = np.asarray(cov, dtype=np.float64)
     std = np.sqrt(np.clip(np.diag(cov), 0.0, None))
     denom = np.outer(std, std)
@@ -1361,13 +1282,7 @@ def _cov_to_correlation(cov):
     return corr
 
 def plot_summary_sector_cap_correlation(all_bin_results, out_dir):
-    """2 rows (major top, minor bottom) x N mass-bin columns of CAP correlation matrices.
-
-    Fully scalable: the tick count/positions and matrix size follow
-    CAP_RADII_ARCMIN, and the column count follows MASS_BINS, so changing
-    CAP_N_AP, the aperture range, or the number of mass bins requires no
-    edits here.
-    """
+    """Plot major- and minor-axis CAP correlation matrices."""
     if len(all_bin_results) == 0:
         return
     n_cols = len(MASS_BINS)
@@ -1412,7 +1327,7 @@ def plot_summary_sector_cap_correlation(all_bin_results, out_dir):
     print(f'  [summary sector CAP correlation] {path}')
 
 def plot_summary_sector_cap_profiles(all_bin_results, out_dir):
-    """One row by three columns: major versus minor sector CAP in each mass bin."""
+    """Plot major- and minor-axis CAP profiles for all mass bins."""
     if len(all_bin_results) == 0:
         return
     fig, axes = plt.subplots(1, len(MASS_BINS), figsize=(CAP_FIG_WIDTH_PER_COL * len(MASS_BINS), CAP_FIG_HEIGHT), squeeze=False, sharey=True)
@@ -1467,7 +1382,7 @@ def plot_summary_sector_cap_profiles(all_bin_results, out_dir):
 
 
 def build_selection_and_cache():
-    """Build the oriented sample without any stellar-age dependency."""
+    """Apply sample cuts, populate the stamp cache, and return selected catalog rows."""
     if RADIO_ONLY and EXCLUDE_RADIO:
         raise ValueError('RADIO_ONLY and EXCLUDE_RADIO cannot both be True.')
     if FIRST_PATH is None and (RADIO_ONLY or EXCLUDE_RADIO):
@@ -1621,7 +1536,7 @@ def build_selection_and_cache():
     return (h5f, base_fits_idx)
 
 def add_full_stack_results(h5f, bin_result, mass_mask):
-    """Compute full mass bin stack and CAP quantities."""
+    """Compute stacked maps and CAP statistics for one stellar-mass bin."""
     mass_lo = bin_result.get('mass_lo', np.nan)
     mass_hi = bin_result.get('mass_hi', np.nan)
     result = stack_from_cache(h5f, mass_mask, label=f'main selected stack logM ({mass_lo:.1f}, {mass_hi:.1f}]')
@@ -1646,10 +1561,7 @@ def add_full_stack_results(h5f, bin_result, mass_mask):
     cap_min_s = paired['minor_std']
     cap_min_cov = paired['minor_cov']
 
-    # Metadata for the exact galaxy rows retained by the paired bootstrap.
-    # ``result['cache_indices']`` is aligned row-by-row with cap_major_values,
-    # cap_minor_values, and result['weights']; paired['valid_row_mask'] then
-    # removes any row excluded because of non-finite CAP values or bad weights.
+    # Galaxy metadata for rows retained by the paired bootstrap.
     selected_cache_indices = np.asarray(result['cache_indices'], dtype=np.int64)
     paired_valid_rows = np.asarray(paired['valid_row_mask'], dtype=bool)
     if paired_valid_rows.shape != (selected_cache_indices.size,):
@@ -1701,7 +1613,7 @@ def add_full_stack_results(h5f, bin_result, mass_mask):
         'cap_major_bootstrap': paired['major_bootstrap'],
         'cap_minor_bootstrap': paired['minor_bootstrap'],
         'cap_paired_n_galaxies': paired['n_galaxies'],
-        # Exact sample metadata used by the paired sector profiles.
+        # Metadata for the galaxies used in the paired sector profiles.
         'cap_paired_log10_stellar_mass': paired_logm,
         'cap_paired_stellar_mass_msun': np.power(10.0, paired_logm),
         'cap_paired_redshift': paired_redshift,
@@ -1712,7 +1624,7 @@ def add_full_stack_results(h5f, bin_result, mass_mask):
     }
 
 def plot_summary_oriented_selected_ba_histograms(all_bin_results, h5f, out_dir):
-    """Plot selected oriented-sample b/a distributions by mass bin."""
+    """Plot axis-ratio distributions for the selected oriented sample."""
     if len(all_bin_results) == 0:
         return
     fig, axes = plt.subplots(1, len(MASS_BINS), figsize=(HIST_FIG_WIDTH_PER_COL * len(MASS_BINS), HIST_FIG_HEIGHT), squeeze=False, sharey=True)
@@ -1763,12 +1675,7 @@ def plot_summary_oriented_selected_ba_histograms(all_bin_results, h5f, out_dir):
 
 
 def export_paired_sector_bootstraps(all_bin_results, out_dir):
-    """Write paired bootstrap products for all mass bins to NPZ and JSON.
-
-    NPZ profile arrays remain in the pipeline's internal unit, y arcmin^2.
-    Multiply them by ``display_scale`` stored in the file to reproduce the
-    numerical convention shown on the profile plots.
-    """
+    """Save paired sector bootstraps and aligned galaxy metadata for downstream fits."""
     if not EXPORT_PAIRED_SECTOR_BOOTSTRAPS:
         return []
 
@@ -1886,9 +1793,7 @@ def export_paired_sector_bootstraps(all_bin_results, out_dir):
         )
         payload[f'{prefix}_joint_covariance'] = joint_cov
 
-        # Save the exact galaxy sample over which CAPPIBARAS should average its
-        # forward model. These arrays are row-aligned with one another and with
-        # the parent sample resampled to produce major_bootstrap/minor_bootstrap.
+        # Galaxy sample used to average the forward model.
         logm = np.asarray(full['cap_paired_log10_stellar_mass'], dtype=np.float64)
         stellar_mass = np.asarray(full['cap_paired_stellar_mass_msun'], dtype=np.float64)
         redshift = np.asarray(full['cap_paired_redshift'], dtype=np.float64)
