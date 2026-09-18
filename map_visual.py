@@ -1,4 +1,4 @@
-#prints out the map
+#prints out the ACT tSZ map
 
 from pixell import enmap, enplot, utils, reproject
 from astropy.io import fits
