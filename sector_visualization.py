@@ -1,3 +1,5 @@
+# creates a figure that shows the sectors for stacking
+
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
