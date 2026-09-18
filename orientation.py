@@ -1,3 +1,5 @@
+# this code creates a visualization similar to lokken 2022 that shows oriented stacking vs normal stacking.
+
 from pathlib import Path
 
 import matplotlib.pyplot as plt
