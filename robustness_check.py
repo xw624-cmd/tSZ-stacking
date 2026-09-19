@@ -68,6 +68,7 @@ ANGLE_TESTS = [
 CACHE_DIR = './robustness_cache'
 EXTRACTION_LOG_EVERY = 2000
 BOOTSTRAP_BATCH_SIZE = 25
+BOOTSTRAP_SEED = ost.SEED
 DISPLAY_SCALE = 1.0e6
 
 
@@ -622,7 +623,7 @@ def main():
             means, stds, n_used = bootstrap_matrix(
                 matrix,
                 n_boot=ost.N_BOOT,
-                seed=ost.SEED + bin_index,
+                seed=BOOTSTRAP_SEED,
             )
             stats.append({
                 name: (means[i], stds[i])
@@ -698,7 +699,7 @@ def main():
                 means, stds, n_used = bootstrap_matrix(
                     matrix,
                     n_boot=ost.N_BOOT,
-                    seed=ost.SEED + 100 + 10 * bin_index + selection_index,
+                    seed=BOOTSTRAP_SEED,
                 )
                 bin_stats[label] = {
                     'major': (means[0], stds[0]),
