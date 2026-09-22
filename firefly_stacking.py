@@ -119,11 +119,12 @@ PAIRED_BOOTSTRAP_BASENAME = 'paired_sector_cap_bootstraps'
 
 SEED = 42
 
-# Thermal-energy diagnostic: use the same ring-ring CAP measurement at
+# Thermal-energy calculation: use the same ring-ring CAP measurement at
 # theta_d = 2 arcmin, with the 1 arcmin inner cut and the discrete
-# N_inner/N_outer correction, then convert galaxy-by-galaxy to energy.
+# N_inner/N_outer correction. Convert the sector-integrated y values to
+# energy using one fixed angular-diameter distance per mass bin, evaluated
+# at the median redshift of the paired major/minor galaxy sample.
 THERMAL_RADIUS_ARCMIN = 2.0
-THERMAL_SECTOR_TO_FULL = 6.0
 THERMAL_MU_E = 1.17
 THERMAL_ARCMIN2_TO_SR = (np.pi / (180.0 * 60.0)) ** 2
 
@@ -815,11 +816,12 @@ def compute_cap_values(image, r_map, pixscale, cap_radii_arcmin, pixel_area,
 
 
 def thermal_energy_from_sector_y(y_sector_arcmin2, redshift):
-    """Convert sector-integrated y to full-disk-equivalent thermal energy.
+    """Convert sector-integrated y to thermal energy for that sector.
 
-    Uses E_th = 6 * (1 + 1/mu_e) * (3/2) * (m_e c^2 / sigma_T)
+    Uses E_th = (1 + 1/mu_e) * (3/2) * (m_e c^2 / sigma_T)
     * D_A(z)^2 * (arcmin^2 -> sr) * y_sector.
-    The returned energy is in erg.
+    No factor of 6 is applied; the returned energy is the energy associated
+    with the measured major- or minor-axis sector itself, in erg.
     """
     y_sector_arcmin2 = np.asarray(y_sector_arcmin2, dtype=np.float64)
     redshift = np.asarray(redshift, dtype=np.float64)
@@ -831,8 +833,7 @@ def thermal_energy_from_sector_y(y_sector_arcmin2, redshift):
 
     d_a_cm = Planck18.angular_diameter_distance(redshift).to_value(u.cm)
     prefactor = (
-        THERMAL_SECTOR_TO_FULL
-        * (1.0 + 1.0 / THERMAL_MU_E)
+        (1.0 + 1.0 / THERMAL_MU_E)
         * 1.5
         * const.m_e.cgs.value
         * const.c.cgs.value ** 2
@@ -1355,7 +1356,6 @@ def _shared_stack_norm(finite_chunks):
         lo = float(np.nanmin(vals))
         hi = float(np.nanmax(vals))
     vabs = max(abs(lo), abs(hi), 1e-30)
-    print(f'  [stack color norm] robust symmetric range: p1={lo:.3e}, p99={hi:.3e}, vmin={-vabs:.3e}, vmax={vabs:.3e}')
     return TwoSlopeNorm(vmin=-vabs, vcenter=0.0, vmax=vabs)
 
 def _imshow_stack_panel(ax, stack, pixscale, norm, n_success=None, axis_label_size=15, tick_label_size=12, n_label_size=10):
@@ -1724,11 +1724,17 @@ def add_full_stack_results(h5f, bin_result, mass_mask):
     selected_redshift = np.asarray(h5f['z'][selected_cache_indices], dtype=np.float64)
     median_redshift = float(np.nanmedian(selected_redshift))
 
-    # Ring-ring thermal-energy diagnostic.  Reuse the per-galaxy sector CAP
+    # Ring-ring thermal-energy calculation. Reuse the per-galaxy sector CAP
     # measurement at theta_d = 2 arcmin so the energy calculation is exactly
     # consistent with the CAP geometry: 1--2 arcmin minus the
     # 2--sqrt(2*theta_d^2 - theta_0^2) arcmin outer ring, including the
     # discrete N_inner/N_outer correction already applied by compute_cap_values.
+    #
+    # For each stellar-mass bin, use one fixed angular-diameter distance for
+    # every galaxy: D_A evaluated at the median redshift of the paired
+    # major/minor sample. This keeps the energy ordering tied directly to the
+    # equal-weight mean sector CAP signal rather than introducing per-galaxy
+    # D_A(z_i)^2 weighting.
     thermal_radius_matches = np.where(np.isclose(CAP_RADII_ARCMIN, THERMAL_RADIUS_ARCMIN))[0]
     if thermal_radius_matches.size == 0:
         raise ValueError(
@@ -1749,11 +1755,16 @@ def add_full_stack_results(h5f, bin_result, mass_mask):
         result['cap_minor_values'], dtype=np.float64
     )[paired_valid_rows, thermal_radius_index]
 
+    thermal_fixed_redshift = float(np.median(paired_redshift))
+    thermal_fixed_redshift_array = np.full_like(
+        paired_redshift, thermal_fixed_redshift, dtype=np.float64
+    )
+
     thermal_ringring_major_energy = thermal_energy_from_sector_y(
-        thermal_ringring_major_y, paired_redshift
+        thermal_ringring_major_y, thermal_fixed_redshift_array
     )
     thermal_ringring_minor_energy = thermal_energy_from_sector_y(
-        thermal_ringring_minor_y, paired_redshift
+        thermal_ringring_minor_y, thermal_fixed_redshift_array
     )
     thermal_ringring_delta_energy = (
         thermal_ringring_minor_energy - thermal_ringring_major_energy
@@ -1837,7 +1848,7 @@ def add_full_stack_results(h5f, bin_result, mass_mask):
         f'    Thermal energies from ring-ring CAP at theta_d={THERMAL_RADIUS_ARCMIN:g} arcmin '
         f'({CAP_INNER_CUT_ARCMIN:g}--{THERMAL_RADIUS_ARCMIN:g} arcmin minus '
         f'{THERMAL_RADIUS_ARCMIN:g}--{thermal_outer_radius_arcmin:.6g} arcmin, '
-        f'outer weight=-N_inner/N_outer; full-disk equivalent): '
+        f'outer weight=-N_inner/N_outer; fixed D_A at median paired z={thermal_fixed_redshift:.4f}): '
         f'<E_major> = {thermal_ringring_major_mean:.6e} +/- {thermal_ringring_major_std:.6e} erg; '
         f'<E_minor> = {thermal_ringring_minor_mean:.6e} +/- {thermal_ringring_minor_std:.6e} erg; '
         f'<Delta E_minor-major> = {thermal_ringring_delta_mean:.6e} +/- '
@@ -1879,12 +1890,13 @@ def add_full_stack_results(h5f, bin_result, mass_mask):
         'cap_paired_fits_idx': paired_fits_idx,
         'cap_paired_cache_indices': paired_cache_indices,
         # Ring-ring thermal-energy comparison, using the exact theta_d=2 arcmin
-        # sector CAP values (including the N_inner/N_outer correction).
+        # sector CAP values (including the N_inner/N_outer correction) and one
+        # fixed D_A evaluated at the median redshift of the paired sample.
         'thermal_radius_arcmin': float(THERMAL_RADIUS_ARCMIN),
         'thermal_inner_cut_arcmin': float(CAP_INNER_CUT_ARCMIN),
         'thermal_outer_radius_arcmin': thermal_outer_radius_arcmin,
-        'thermal_sector_to_full': float(THERMAL_SECTOR_TO_FULL),
         'thermal_ringring_outer_weight': '-N_inner/N_outer',
+        'thermal_fixed_redshift': thermal_fixed_redshift,
         'thermal_ringring_major_y_arcmin2': thermal_ringring_major_y,
         'thermal_ringring_minor_y_arcmin2': thermal_ringring_minor_y,
         'thermal_ringring_major_energy_erg': thermal_ringring_major_energy,
@@ -1927,7 +1939,7 @@ def print_final_diagnostics(all_bin_results):
         f'\nThermal energies from ring-ring CAP at theta_d={THERMAL_RADIUS_ARCMIN:g} arcmin '
         f'({CAP_INNER_CUT_ARCMIN:g}--{THERMAL_RADIUS_ARCMIN:g} arcmin minus '
         f'{THERMAL_RADIUS_ARCMIN:g}--{thermal_outer_radius_arcmin:.6g} arcmin; '
-        f'outer weight=-N_inner/N_outer; full-disk equivalent) [erg]:'
+        f'outer weight=-N_inner/N_outer; fixed D_A at median paired redshift) [erg]:'
     )
     for bin_result in all_bin_results:
         mass_lo = bin_result.get('mass_lo', np.nan)
@@ -1942,14 +1954,15 @@ def print_final_diagnostics(all_bin_results):
         minor_std = float(full.get('thermal_ringring_minor_std_erg', np.nan))
         delta_mean = float(full.get('thermal_ringring_delta_mean_erg', np.nan))
         delta_std = float(full.get('thermal_ringring_delta_std_erg', np.nan))
+        fixed_z = float(full.get('thermal_fixed_redshift', np.nan))
         print(
-            f'  logM ({mass_lo:.1f}, {mass_hi:.1f}]: '
+            f'  logM ({mass_lo:.1f}, {mass_hi:.1f}]: fixed z = {fixed_z:.4f}; '
             f'<E_major> = {major_mean:.6e} +/- {major_std:.6e} erg; '
             f'<E_minor> = {minor_mean:.6e} +/- {minor_std:.6e} erg; '
             f'<Delta E_minor-major> = {delta_mean:.6e} +/- {delta_std:.6e} erg'
         )
 
-    target_radius = 2.0
+    target_radius = THERMAL_RADIUS_ARCMIN
     radius_matches = np.where(np.isclose(CAP_RADII_ARCMIN, target_radius))[0]
     if radius_matches.size == 0:
         raise ValueError(f'No CAP aperture found at {target_radius:g} arcmin')
@@ -1965,10 +1978,11 @@ def print_final_diagnostics(all_bin_results):
             continue
         major = float(np.asarray(full['cap_major_mean'])[radius_index])
         minor = float(np.asarray(full['cap_minor_mean'])[radius_index])
-        sigma_major = float(np.asarray(full['cap_major_std'])[radius_index])
-        sigma_minor = float(np.asarray(full['cap_minor_std'])[radius_index])
-        denom = np.hypot(sigma_major, sigma_minor)
-        significance = abs(major - minor) / denom if denom > 0.0 else np.nan
+        major_boot = np.asarray(full['cap_major_bootstrap'], dtype=np.float64)[:, radius_index]
+        minor_boot = np.asarray(full['cap_minor_bootstrap'], dtype=np.float64)[:, radius_index]
+        delta_boot = minor_boot - major_boot
+        denom = float(np.std(delta_boot, ddof=1)) if delta_boot.size > 1 else np.nan
+        significance = abs(major - minor) / denom if denom and denom > 0.0 else np.nan
         print(f'  logM ({mass_lo:.1f}, {mass_hi:.1f}]: S_delta = {significance:.4f} sigma')
 
     scale = float(DISPLAY_Y_SCALE)
@@ -2288,10 +2302,9 @@ def main():
         2.0 * THERMAL_RADIUS_ARCMIN ** 2 - CAP_INNER_CUT_ARCMIN ** 2
     )
     print(
-        f'  Thermal diagnostic: ring-ring {CAP_INNER_CUT_ARCMIN:g}--'
+        f'  Thermal energy: ring-ring {CAP_INNER_CUT_ARCMIN:g}--'
         f'{THERMAL_RADIUS_ARCMIN:g} arcmin minus {THERMAL_RADIUS_ARCMIN:g}--'
-        f'{thermal_outer_radius_arcmin:.6g} arcmin, outer weight=-N_inner/N_outer, '
-        f'x{THERMAL_SECTOR_TO_FULL:g} full-disk equivalent'
+        f'{thermal_outer_radius_arcmin:.6g} arcmin, outer weight=-N_inner/N_outer'
     )
     print('  Dust cut: OFF')
     print('  photoPosPlate cross-match: ON')
