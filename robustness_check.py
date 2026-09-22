@@ -472,34 +472,50 @@ def measure_map(h5f, pa, valid_rows, ny, nx, pixscale, half_angles):
 def _condition_names():
     names = []
     for label, _ in MAPS:
-        names.extend([(f'map:{label}:major'), (f'map:{label}:minor')])
+        names.extend([
+            f'map:{label}:major',
+            f'map:{label}:minor',
+            f'map:{label}:difference',
+        ])
     names.extend([
         'angle:30:major',
         'angle:30:minor',
+        'angle:30:difference',
         'angle:45:major',
         'angle:45:minor',
+        'angle:45:difference',
     ])
     return names
 
 
 def build_condition_matrix(map_results, sample_mask):
+    """Build major, minor, and direct minor-major columns for every test."""
     columns = []
 
     for label, _ in MAPS:
         r = map_results[label][MAP_TEST_HALF_ANGLE_DEG]
-        columns.extend([r['major'][sample_mask], r['minor'][sample_mask]])
+        major = r['major'][sample_mask]
+        minor = r['minor'][sample_mask]
+        difference = minor - major
+        columns.extend([major, minor, difference])
 
     original_label = MAPS[0][0]
     for half in (30.0, 45.0):
         r = map_results[original_label][half]
-        columns.extend([r['major'][sample_mask], r['minor'][sample_mask]])
+        major = r['major'][sample_mask]
+        minor = r['minor'][sample_mask]
+        difference = minor - major
+        columns.extend([major, minor, difference])
 
-    matrix = np.column_stack(columns)
-    return matrix
+    return np.column_stack(columns)
 
 
 def bootstrap_matrix(matrix, n_boot, seed, batch_size=BOOTSTRAP_BATCH_SIZE):
-    """Bootstrap all comparison columns with common galaxy resamples."""
+    """Bootstrap all columns with common galaxy resamples.
+
+    The minor-major difference is an explicit per-galaxy column, so its
+    uncertainty is obtained by bootstrapping y_minor - y_major directly.
+    """
     matrix = np.asarray(matrix, dtype=np.float64)
     finite = np.all(np.isfinite(matrix), axis=1)
     data = matrix[finite]
@@ -541,30 +557,60 @@ def format_value(mean, std, scale=1.0):
     return f'{mean:.4f} +/- {std:.4f}'
 
 
+def format_significance(value):
+    return f'{value:.4f} sigma' if np.isfinite(value) else 'nan sigma'
+
+
+def format_pair_result(major, minor, difference, scale=1.0):
+    """Format major, minor, direct-bootstrap difference, and significance."""
+    diff_mean, diff_std = difference
+    significance = (
+        abs(diff_mean) / diff_std
+        if np.isfinite(diff_std) and diff_std > 0.0
+        else np.nan
+    )
+    return (
+        format_value(*major, scale=scale),
+        format_value(*minor, scale=scale),
+        format_value(diff_mean, diff_std, scale=scale),
+        format_significance(significance),
+    )
+
+
 def print_grouped_table(title, row_labels, row_values):
-    """Print three mass-bin groups, each with major and minor subcolumns."""
+    """Print three mass-bin groups with major/minor/difference/significance."""
     cell_w = 22
     row_w = max(25, max(len(label) for label in row_labels) + 2)
 
     print('\n' + title)
-    print('Values are in 10^-6 y arcmin^2.')
+    print('Major, minor, and minor-major are in 10^-6 y arcmin^2; S_delta is in sigma.')
 
     header1 = ' ' * row_w
     for lo, hi in ost.MASS_BINS:
         label = f'logM ({lo:.1f}, {hi:.1f}]'
-        header1 += f'{label:^{2 * cell_w}}'
+        header1 += f'{label:^{4 * cell_w}}'
     print(header1)
 
     header2 = f'{"":<{row_w}}'
     for _ in ost.MASS_BINS:
-        header2 += f'{"Major":^{cell_w}}{"Minor":^{cell_w}}'
+        header2 += (
+            f'{"Major":^{cell_w}}'
+            f'{"Minor":^{cell_w}}'
+            f'{"Minor-Major":^{cell_w}}'
+            f'{"S_delta":^{cell_w}}'
+        )
     print(header2)
-    print('-' * (row_w + len(ost.MASS_BINS) * 2 * cell_w))
+    print('-' * (row_w + len(ost.MASS_BINS) * 4 * cell_w))
 
     for label, values in zip(row_labels, row_values):
         line = f'{label:<{row_w}}'
-        for major, minor in values:
-            line += f'{major:^{cell_w}}{minor:^{cell_w}}'
+        for major, minor, difference, significance in values:
+            line += (
+                f'{major:^{cell_w}}'
+                f'{minor:^{cell_w}}'
+                f'{difference:^{cell_w}}'
+                f'{significance:^{cell_w}}'
+            )
         print(line)
 
 
@@ -634,12 +680,14 @@ def main():
         map_rows = []
         for label, _ in MAPS:
             values = []
+            major_name = f'map:{label}:major'
+            minor_name = f'map:{label}:minor'
+            difference_name = f'map:{label}:difference'
             for bin_stats in stats:
-                major = bin_stats[f'map:{label}:major']
-                minor = bin_stats[f'map:{label}:minor']
-                values.append((
-                    format_value(*major),
-                    format_value(*minor),
+                values.append(format_pair_result(
+                    bin_stats[major_name],
+                    bin_stats[minor_name],
+                    bin_stats[difference_name],
                 ))
             map_rows.append(values)
 
@@ -654,16 +702,20 @@ def main():
         angle_labels = []
         for half, rescale in ANGLE_TESTS:
             values = []
+            if half == 15.0:
+                major_name = f'map:{original_label}:major'
+                minor_name = f'map:{original_label}:minor'
+                difference_name = f'map:{original_label}:difference'
+            else:
+                major_name = f'angle:{int(half)}:major'
+                minor_name = f'angle:{int(half)}:minor'
+                difference_name = f'angle:{int(half)}:difference'
             for bin_stats in stats:
-                if half == 15.0:
-                    major = bin_stats[f'map:{original_label}:major']
-                    minor = bin_stats[f'map:{original_label}:minor']
-                else:
-                    major = bin_stats[f'angle:{int(half)}:major']
-                    minor = bin_stats[f'angle:{int(half)}:minor']
-                values.append((
-                    format_value(*major, scale=rescale),
-                    format_value(*minor, scale=rescale),
+                values.append(format_pair_result(
+                    bin_stats[major_name],
+                    bin_stats[minor_name],
+                    bin_stats[difference_name],
+                    scale=rescale,
                 ))
             angle_rows.append(values)
             angle_labels.append(f'{half:g} deg (x{rescale:g})')
@@ -674,7 +726,6 @@ def main():
             angle_labels,
             angle_rows,
         )
-
 
         radio_stats = []
         original_15 = map_results[original_label][15.0]
@@ -692,9 +743,13 @@ def main():
             }
             bin_stats = {}
             for selection_index, (label, sample_mask) in enumerate(selections.items()):
+                major_values = original_15['major'][sample_mask]
+                minor_values = original_15['minor'][sample_mask]
+                difference_values = minor_values - major_values
                 matrix = np.column_stack([
-                    original_15['major'][sample_mask],
-                    original_15['minor'][sample_mask],
+                    major_values,
+                    minor_values,
+                    difference_values,
                 ])
                 means, stds, n_used = bootstrap_matrix(
                     matrix,
@@ -704,6 +759,7 @@ def main():
                 bin_stats[label] = {
                     'major': (means[0], stds[0]),
                     'minor': (means[1], stds[1]),
+                    'difference': (means[2], stds[2]),
                     'n': n_used,
                 }
             radio_stats.append(bin_stats)
@@ -717,9 +773,10 @@ def main():
         for label in ('All galaxies', 'FIRST removed'):
             values = []
             for bin_stats in radio_stats:
-                values.append((
-                    format_value(*bin_stats[label]['major']),
-                    format_value(*bin_stats[label]['minor']),
+                values.append(format_pair_result(
+                    bin_stats[label]['major'],
+                    bin_stats[label]['minor'],
+                    bin_stats[label]['difference'],
                 ))
             radio_rows.append(values)
 
