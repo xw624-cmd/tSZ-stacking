@@ -15,6 +15,9 @@ from matplotlib.colors import TwoSlopeNorm
 from matplotlib.ticker import FuncFormatter, MaxNLocator
 from matplotlib.backends.backend_pdf import PdfPages
 from astropy.io import fits
+from astropy.cosmology import Planck18
+from astropy import constants as const
+import astropy.units as u
 from pixell import enmap, reproject, utils
 from scipy.interpolate import RectBivariateSpline
 from scipy import spatial
@@ -116,6 +119,14 @@ PAIRED_BOOTSTRAP_BASENAME = 'paired_sector_cap_bootstraps'
 
 SEED = 42
 
+# Thermal-energy diagnostic: use the same ring-ring CAP measurement at
+# theta_d = 2 arcmin, with the 1 arcmin inner cut and the discrete
+# N_inner/N_outer correction, then convert galaxy-by-galaxy to energy.
+THERMAL_RADIUS_ARCMIN = 2.0
+THERMAL_SECTOR_TO_FULL = 6.0
+THERMAL_MU_E = 1.17
+THERMAL_ARCMIN2_TO_SR = (np.pi / (180.0 * 60.0)) ** 2
+
 
 SUMMARY_DIR = './run_output'
 
@@ -130,9 +141,9 @@ BA_HIST_MIN = 0.0
 
 BA_HIST_MAX = 1.0
 
-STACK_COLOR_PERCENTILE_LOW = 1
+STACK_COLOR_PERCENTILE_LOW = 0
 
-STACK_COLOR_PERCENTILE_HIGH = 99
+STACK_COLOR_PERCENTILE_HIGH = 100
 
 SAVEFIG_DPI = 220
 
@@ -661,6 +672,72 @@ def paired_profile_bootstrap(major_profiles, minor_profiles, weights=None, seed=
         'valid_row_mask': valid,
     }
 
+def bootstrap_cap_components(major_raw, minor_raw, major_sub, minor_sub,
+                             weights=None, seed=SEED):
+    """Bootstrap the four CAP component profiles with common galaxy resamples."""
+    arrays = [
+        np.asarray(major_raw, dtype=np.float64),
+        np.asarray(minor_raw, dtype=np.float64),
+        np.asarray(major_sub, dtype=np.float64),
+        np.asarray(minor_sub, dtype=np.float64),
+    ]
+    if any(arr.ndim != 2 for arr in arrays):
+        raise ValueError('CAP component profiles must be 2D arrays')
+    if any(arr.shape != arrays[0].shape for arr in arrays[1:]):
+        raise ValueError('CAP component profiles must have identical shapes')
+
+    n_total, n_ap = arrays[0].shape
+    valid = np.logical_and.reduce([np.all(np.isfinite(arr), axis=1) for arr in arrays])
+    if weights is None:
+        w_all = np.ones(n_total, dtype=np.float64)
+    else:
+        w_all = np.asarray(weights, dtype=np.float64)
+        if w_all.shape != (n_total,):
+            raise ValueError('weights must have the same length as the component profiles')
+        valid &= np.isfinite(w_all) & (w_all > 0.0)
+
+    arrays = [arr[valid] for arr in arrays]
+    w = w_all[valid]
+    n = len(w)
+    if n == 0 or np.sum(w) <= 0.0:
+        nan_profile = np.full(n_ap, np.nan, dtype=np.float64)
+        return {
+            'major_raw_mean': nan_profile.copy(),
+            'minor_raw_mean': nan_profile.copy(),
+            'major_sub_mean': nan_profile.copy(),
+            'minor_sub_mean': nan_profile.copy(),
+            'major_raw_std': nan_profile.copy(),
+            'minor_raw_std': nan_profile.copy(),
+            'major_sub_std': nan_profile.copy(),
+            'minor_sub_std': nan_profile.copy(),
+            'n_galaxies': 0,
+        }
+
+    means = [np.average(arr, axis=0, weights=w) for arr in arrays]
+    if not RUN_BOOTSTRAP or n < 2:
+        stds = [np.zeros(n_ap, dtype=np.float64) for _ in arrays]
+    else:
+        rng = np.random.default_rng(seed)
+        boot = [np.empty((N_BOOT, n_ap), dtype=np.float64) for _ in arrays]
+        for b in range(N_BOOT):
+            draw = rng.integers(0, n, size=n)
+            draw_weights = w[draw]
+            for k, arr in enumerate(arrays):
+                boot[k][b] = np.average(arr[draw], axis=0, weights=draw_weights)
+        stds = [np.std(samples, axis=0, ddof=1) for samples in boot]
+
+    return {
+        'major_raw_mean': means[0].astype(np.float64),
+        'minor_raw_mean': means[1].astype(np.float64),
+        'major_sub_mean': means[2].astype(np.float64),
+        'minor_sub_mean': means[3].astype(np.float64),
+        'major_raw_std': stds[0].astype(np.float64),
+        'minor_raw_std': stds[1].astype(np.float64),
+        'major_sub_std': stds[2].astype(np.float64),
+        'minor_sub_std': stds[3].astype(np.float64),
+        'n_galaxies': int(n),
+    }
+
 def make_angle_map(ny, nx):
     """Return pixel-center polar angles in degrees (0 right, 90 up)."""
     cy, cx = (ny // 2, nx // 2)
@@ -702,16 +779,19 @@ def _cap_filter_metadata():
     }
 
 def compute_cap_values(image, r_map, pixscale, cap_radii_arcmin, pixel_area,
-                       sec_mask=None, inner_cut_arcmin=None):
+                       sec_mask=None, inner_cut_arcmin=None, return_components=False):
     """Apply the Liu et al. ring-ring CAP filter to one cutout.
 
     Pixel centers determine radial and sector membership. The outer annulus
     is rescaled by N_inner/N_outer so the discrete filter integrates to zero.
-    The returned values are in y arcmin^2."""
+    Values are returned in y arcmin^2.
+    """
     if inner_cut_arcmin is None:
         inner_cut_arcmin = CAP_INNER_CUT_ARCMIN
     cap_radii_arcmin = _validate_cap_filter(cap_radii_arcmin, inner_cut_arcmin)
     cap = np.full(len(cap_radii_arcmin), np.nan, dtype=np.float64)
+    raw = np.full(len(cap_radii_arcmin), np.nan, dtype=np.float64)
+    subtraction = np.full(len(cap_radii_arcmin), np.nan, dtype=np.float64)
     theta = r_map * pixscale
     for i, r_ap in enumerate(cap_radii_arcmin):
         r_outer = np.sqrt(2.0 * r_ap**2 - inner_cut_arcmin**2)
@@ -726,8 +806,73 @@ def compute_cap_values(image, r_map, pixscale, cap_radii_arcmin, pixel_area,
             continue
         disc_sum = float(np.nansum(image[disc]))
         ring_sum = float(np.nansum(image[ring]))
+        raw[i] = disc_sum * pixel_area
+        subtraction[i] = ring_sum * n_disc / n_ring * pixel_area
         cap[i] = (disc_sum - ring_sum * n_disc / n_ring) * pixel_area
+    if return_components:
+        return cap, raw, subtraction
     return cap
+
+
+def thermal_energy_from_sector_y(y_sector_arcmin2, redshift):
+    """Convert sector-integrated y to full-disk-equivalent thermal energy.
+
+    Uses E_th = 6 * (1 + 1/mu_e) * (3/2) * (m_e c^2 / sigma_T)
+    * D_A(z)^2 * (arcmin^2 -> sr) * y_sector.
+    The returned energy is in erg.
+    """
+    y_sector_arcmin2 = np.asarray(y_sector_arcmin2, dtype=np.float64)
+    redshift = np.asarray(redshift, dtype=np.float64)
+    if y_sector_arcmin2.shape != redshift.shape:
+        raise ValueError(
+            'y_sector_arcmin2 and redshift must have identical shapes; '
+            f'got {y_sector_arcmin2.shape} and {redshift.shape}'
+        )
+
+    d_a_cm = Planck18.angular_diameter_distance(redshift).to_value(u.cm)
+    prefactor = (
+        THERMAL_SECTOR_TO_FULL
+        * (1.0 + 1.0 / THERMAL_MU_E)
+        * 1.5
+        * const.m_e.cgs.value
+        * const.c.cgs.value ** 2
+        / const.sigma_T.cgs.value
+        * THERMAL_ARCMIN2_TO_SR
+    )
+    return (prefactor * d_a_cm ** 2 * y_sector_arcmin2).astype(np.float64)
+
+
+def bootstrap_weighted_scalar(values, weights=None, seed=SEED):
+    """Return weighted mean and bootstrap SD for one per-galaxy scalar."""
+    values = np.asarray(values, dtype=np.float64)
+    if values.ndim != 1:
+        raise ValueError('values must be a 1D per-galaxy array')
+    if weights is None:
+        w_all = np.ones(values.size, dtype=np.float64)
+    else:
+        w_all = np.asarray(weights, dtype=np.float64)
+        if w_all.shape != values.shape:
+            raise ValueError('weights must have the same shape as values')
+
+    valid = np.isfinite(values) & np.isfinite(w_all) & (w_all > 0.0)
+    v = values[valid]
+    w = w_all[valid]
+    n = v.size
+    if n == 0 or np.sum(w) <= 0.0:
+        return np.nan, np.nan, np.empty(0, dtype=np.float64), 0
+
+    mean = float(np.average(v, weights=w))
+    if not RUN_BOOTSTRAP or n < 2:
+        return mean, 0.0, np.array([mean], dtype=np.float64), n
+
+    rng = np.random.default_rng(seed)
+    boot = np.empty(N_BOOT, dtype=np.float64)
+    for b in range(N_BOOT):
+        draw = rng.integers(0, n, size=n)
+        boot[b] = np.average(v[draw], weights=w[draw])
+    std = float(np.std(boot, ddof=1))
+    return mean, std, boot, n
+
 
 def full_stamp_inside_map(ra_deg, dec_deg, emap, STAMP_SOURCE_RADIUS_ARCMIN):
     """Check whether the source thumbnail footprint lies inside the map."""
@@ -990,31 +1135,17 @@ def stack_from_cache(h5f, mask, label='', weights=None):
     n_candidates = len(candidate_indices)
     n_sel = len(indices)
     n_rejected_stamp_valid = int(np.sum(mask & ~stamp_valid))
-    if weights is None:
-        selected_weights = np.ones(n_sel, dtype=np.float64)
-    else:
-        weights = np.asarray(weights, dtype=np.float64)
-        if weights.shape[0] != len(mask):
-            raise ValueError('weights must have the same length as mask')
-        selected_weights = weights[indices].astype(np.float64)
-        bad_weight = ~np.isfinite(selected_weights) | (selected_weights <= 0.0)
-        if np.any(bad_weight):
-            print(f'  [stack accounting: {label}] rejecting {int(np.sum(bad_weight)):,} nonpositive or nonfinite weights')
-            keep = ~bad_weight
-            indices = indices[keep]
-            selected_weights = selected_weights[keep]
-            n_sel = len(indices)
-            if n_sel == 0:
-                return {'n_success': 0, 'effective_mask': effective_mask}
-        effective_mask = np.zeros_like(mask, dtype=bool)
-        effective_mask[indices] = True
+    # Equal-weight analysis: every retained galaxy has statistical weight 1.
+    # Any supplied weights are intentionally ignored for consistency across
+    # the image stacks, CAP profiles, and thermal-energy calculation.
+    selected_weights = np.ones(n_sel, dtype=np.float64)
     sum_w = float(np.sum(selected_weights))
     label_txt = label if label else 'unnamed selection'
     print(f'  [stack accounting: {label_txt}] candidates before stamp-valid cut: {n_candidates:,}')
     print(f'  [stack accounting: {label_txt}] rejected by stamp_valid=False: {n_rejected_stamp_valid:,}')
     print(f'  [stack accounting: {label_txt}] used for stacking: {n_sel:,}')
-    if weights is not None and n_sel > 0:
-        print(f'  [stack accounting: {label_txt}] mass weights: sum={sum_w:.6e}, min={np.nanmin(selected_weights):.3e}, median={np.nanmedian(selected_weights):.3e}, max={np.nanmax(selected_weights):.3e}')
+    if n_sel > 0:
+        print(f'  [stack accounting: {label_txt}] equal galaxy weights: w_i = 1 for all retained galaxies')
     if n_sel == 0:
         return {'n_success': 0, 'effective_mask': effective_mask}
     pixscale = 2.0 * STAMP_RADIUS_ARCMIN / (ny - 1)
@@ -1033,18 +1164,30 @@ def stack_from_cache(h5f, mask, label='', weights=None):
     cap_full_values = np.full((n_sel, n_ap), np.nan, dtype=np.float64)
     cap_major_values = np.full((n_sel, n_ap), np.nan, dtype=np.float64)
     cap_minor_values = np.full((n_sel, n_ap), np.nan, dtype=np.float64)
+    cap_major_raw_values = np.full((n_sel, n_ap), np.nan, dtype=np.float64)
+    cap_minor_raw_values = np.full((n_sel, n_ap), np.nan, dtype=np.float64)
+    cap_major_sub_values = np.full((n_sel, n_ap), np.nan, dtype=np.float64)
+    cap_minor_sub_values = np.full((n_sel, n_ap), np.nan, dtype=np.float64)
     t0 = time.time()
     for j, cache_idx in enumerate(indices):
         source_stamp = np.asarray(h5f['stamps'][cache_idx], dtype=np.float64)
         pa_j = float(pa_all[cache_idx])
         stamp = sample_large_stamp_to_output(source_stamp, 0.0, ny, nx, pixscale)
-        stamp_rot = sample_large_stamp_to_output(source_stamp, -pa_j, ny, nx, pixscale)
+        stamp_rot = sample_large_stamp_to_output(
+            source_stamp, -pa_j, ny, nx, pixscale
+        )
         w_j = selected_weights[j]
         stack_sum_unori += w_j * stamp.astype(np.float64)
         stack_sum_ori += w_j * stamp_rot.astype(np.float64)
         cap_full_values[j] = compute_cap_values(stamp, r_map, pixscale, CAP_RADII_ARCMIN, cap_pixel_area)
-        cap_major_values[j] = compute_cap_values(stamp_rot, r_map, pixscale, CAP_RADII_ARCMIN, cap_pixel_area, sec_mask=major_mask)
-        cap_minor_values[j] = compute_cap_values(stamp_rot, r_map, pixscale, CAP_RADII_ARCMIN, cap_pixel_area, sec_mask=minor_mask)
+        cap_major_values[j], cap_major_raw_values[j], cap_major_sub_values[j] = compute_cap_values(
+            stamp_rot, r_map, pixscale, CAP_RADII_ARCMIN, cap_pixel_area,
+            sec_mask=major_mask, return_components=True,
+        )
+        cap_minor_values[j], cap_minor_raw_values[j], cap_minor_sub_values[j] = compute_cap_values(
+            stamp_rot, r_map, pixscale, CAP_RADII_ARCMIN, cap_pixel_area,
+            sec_mask=minor_mask, return_components=True,
+        )
         if (j + 1) % 5000 == 0:
             dt = time.time() - t0
             print(f'    stacked {j + 1:,}/{n_sel:,}, rate={(j + 1) / max(dt, 1e-06):.0f}/s')
@@ -1061,6 +1204,10 @@ def stack_from_cache(h5f, mask, label='', weights=None):
         'cap_full_values': cap_full_values,
         'cap_major_values': cap_major_values,
         'cap_minor_values': cap_minor_values,
+        'cap_major_raw_values': cap_major_raw_values,
+        'cap_minor_raw_values': cap_minor_raw_values,
+        'cap_major_sub_values': cap_major_sub_values,
+        'cap_minor_sub_values': cap_minor_sub_values,
         'effective_mask': effective_mask,
         # Cache-row order matches the per-galaxy CAP arrays.
         'cache_indices': np.asarray(indices, dtype=np.int64),
@@ -1545,13 +1692,13 @@ def add_full_stack_results(h5f, bin_result, mass_mask):
         return
     cap_m, cap_s, cap_cov, n_cap = mean_profile_and_covariance(
         result['cap_full_values'],
-        weights=result.get('weights'),
+        weights=None,
         seed=SEED,
     )
     paired = paired_profile_bootstrap(
         result['cap_major_values'],
         result['cap_minor_values'],
-        weights=result.get('weights'),
+        weights=None,
         seed=SEED,
     )
     cap_maj_m = paired['major_mean']
@@ -1570,10 +1717,102 @@ def add_full_stack_results(h5f, bin_result, mass_mask):
             f'{paired_valid_rows.shape} versus {(selected_cache_indices.size,)}'
         )
     paired_cache_indices = selected_cache_indices[paired_valid_rows]
-    paired_weights = np.asarray(result['weights'], dtype=np.float64)[paired_valid_rows]
+    paired_weights = np.ones(int(np.sum(paired_valid_rows)), dtype=np.float64)
     paired_logm = np.asarray(h5f['logm'][paired_cache_indices], dtype=np.float64)
     paired_redshift = np.asarray(h5f['z'][paired_cache_indices], dtype=np.float64)
     paired_fits_idx = np.asarray(h5f['fits_idx'][paired_cache_indices], dtype=np.int64)
+    selected_redshift = np.asarray(h5f['z'][selected_cache_indices], dtype=np.float64)
+    median_redshift = float(np.nanmedian(selected_redshift))
+
+    # Ring-ring thermal-energy diagnostic.  Reuse the per-galaxy sector CAP
+    # measurement at theta_d = 2 arcmin so the energy calculation is exactly
+    # consistent with the CAP geometry: 1--2 arcmin minus the
+    # 2--sqrt(2*theta_d^2 - theta_0^2) arcmin outer ring, including the
+    # discrete N_inner/N_outer correction already applied by compute_cap_values.
+    thermal_radius_matches = np.where(np.isclose(CAP_RADII_ARCMIN, THERMAL_RADIUS_ARCMIN))[0]
+    if thermal_radius_matches.size == 0:
+        raise ValueError(
+            f'No CAP aperture found at THERMAL_RADIUS_ARCMIN={THERMAL_RADIUS_ARCMIN:g} arcmin'
+        )
+    thermal_radius_index = int(thermal_radius_matches[0])
+    thermal_outer_radius_arcmin = float(
+        np.sqrt(
+            2.0 * THERMAL_RADIUS_ARCMIN ** 2
+            - CAP_INNER_CUT_ARCMIN ** 2
+        )
+    )
+
+    thermal_ringring_major_y = np.asarray(
+        result['cap_major_values'], dtype=np.float64
+    )[paired_valid_rows, thermal_radius_index]
+    thermal_ringring_minor_y = np.asarray(
+        result['cap_minor_values'], dtype=np.float64
+    )[paired_valid_rows, thermal_radius_index]
+
+    thermal_ringring_major_energy = thermal_energy_from_sector_y(
+        thermal_ringring_major_y, paired_redshift
+    )
+    thermal_ringring_minor_energy = thermal_energy_from_sector_y(
+        thermal_ringring_minor_y, paired_redshift
+    )
+    thermal_ringring_delta_energy = (
+        thermal_ringring_minor_energy - thermal_ringring_major_energy
+    )
+
+    (
+        thermal_ringring_major_mean,
+        thermal_ringring_major_std,
+        thermal_ringring_major_boot,
+        thermal_ringring_n,
+    ) = bootstrap_weighted_scalar(
+        thermal_ringring_major_energy,
+        weights=None,
+        seed=SEED,
+    )
+    (
+        thermal_ringring_minor_mean,
+        thermal_ringring_minor_std,
+        thermal_ringring_minor_boot,
+        thermal_ringring_n_minor,
+    ) = bootstrap_weighted_scalar(
+        thermal_ringring_minor_energy,
+        weights=None,
+        seed=SEED,
+    )
+    if thermal_ringring_n_minor != thermal_ringring_n:
+        raise ValueError(
+            'Major/minor ring-ring thermal-energy bootstrap samples retained '
+            'different galaxy counts: '
+            f'{thermal_ringring_n} versus {thermal_ringring_n_minor}'
+        )
+
+    thermal_ringring_delta_mean = (
+        thermal_ringring_minor_mean - thermal_ringring_major_mean
+    )
+    if thermal_ringring_major_boot.shape == thermal_ringring_minor_boot.shape:
+        thermal_ringring_delta_boot = (
+            thermal_ringring_minor_boot - thermal_ringring_major_boot
+        )
+        thermal_ringring_delta_std = (
+            float(np.std(thermal_ringring_delta_boot, ddof=1))
+            if thermal_ringring_delta_boot.size > 1 else 0.0
+        )
+    else:
+        thermal_ringring_delta_boot = np.empty(0, dtype=np.float64)
+        thermal_ringring_delta_std = np.nan
+
+    components = bootstrap_cap_components(
+        np.asarray(result['cap_major_raw_values'], dtype=np.float64)[paired_valid_rows],
+        np.asarray(result['cap_minor_raw_values'], dtype=np.float64)[paired_valid_rows],
+        np.asarray(result['cap_major_sub_values'], dtype=np.float64)[paired_valid_rows],
+        np.asarray(result['cap_minor_sub_values'], dtype=np.float64)[paired_valid_rows],
+        weights=None,
+        seed=SEED,
+    )
+    raw_major_mean = components['major_raw_mean']
+    raw_minor_mean = components['minor_raw_mean']
+    sub_major_mean = components['major_sub_mean']
+    sub_minor_mean = components['minor_sub_mean']
 
     n_meta = paired_cache_indices.size
     if n_meta != paired['n_galaxies']:
@@ -1594,6 +1833,16 @@ def add_full_stack_results(h5f, bin_result, mass_mask):
         cap_min_m,
         cap_min_s,
     )
+    print(
+        f'    Thermal energies from ring-ring CAP at theta_d={THERMAL_RADIUS_ARCMIN:g} arcmin '
+        f'({CAP_INNER_CUT_ARCMIN:g}--{THERMAL_RADIUS_ARCMIN:g} arcmin minus '
+        f'{THERMAL_RADIUS_ARCMIN:g}--{thermal_outer_radius_arcmin:.6g} arcmin, '
+        f'outer weight=-N_inner/N_outer; full-disk equivalent): '
+        f'<E_major> = {thermal_ringring_major_mean:.6e} +/- {thermal_ringring_major_std:.6e} erg; '
+        f'<E_minor> = {thermal_ringring_minor_mean:.6e} +/- {thermal_ringring_minor_std:.6e} erg; '
+        f'<Delta E_minor-major> = {thermal_ringring_delta_mean:.6e} +/- '
+        f'{thermal_ringring_delta_std:.6e} erg'
+    )
     bin_result['full_stack'] = {
         'n_success': result['n_success'],
         'stack_unori': result['stack_unori'],
@@ -1613,6 +1862,15 @@ def add_full_stack_results(h5f, bin_result, mass_mask):
         'cap_major_bootstrap': paired['major_bootstrap'],
         'cap_minor_bootstrap': paired['minor_bootstrap'],
         'cap_paired_n_galaxies': paired['n_galaxies'],
+        'median_redshift': median_redshift,
+        'cap_major_raw_mean': raw_major_mean,
+        'cap_minor_raw_mean': raw_minor_mean,
+        'cap_major_sub_mean': sub_major_mean,
+        'cap_minor_sub_mean': sub_minor_mean,
+        'cap_major_raw_std': components['major_raw_std'],
+        'cap_minor_raw_std': components['minor_raw_std'],
+        'cap_major_sub_std': components['major_sub_std'],
+        'cap_minor_sub_std': components['minor_sub_std'],
         # Metadata for the galaxies used in the paired sector profiles.
         'cap_paired_log10_stellar_mass': paired_logm,
         'cap_paired_stellar_mass_msun': np.power(10.0, paired_logm),
@@ -1620,8 +1878,142 @@ def add_full_stack_results(h5f, bin_result, mass_mask):
         'cap_paired_weights': paired_weights,
         'cap_paired_fits_idx': paired_fits_idx,
         'cap_paired_cache_indices': paired_cache_indices,
+        # Ring-ring thermal-energy comparison, using the exact theta_d=2 arcmin
+        # sector CAP values (including the N_inner/N_outer correction).
+        'thermal_radius_arcmin': float(THERMAL_RADIUS_ARCMIN),
+        'thermal_inner_cut_arcmin': float(CAP_INNER_CUT_ARCMIN),
+        'thermal_outer_radius_arcmin': thermal_outer_radius_arcmin,
+        'thermal_sector_to_full': float(THERMAL_SECTOR_TO_FULL),
+        'thermal_ringring_outer_weight': '-N_inner/N_outer',
+        'thermal_ringring_major_y_arcmin2': thermal_ringring_major_y,
+        'thermal_ringring_minor_y_arcmin2': thermal_ringring_minor_y,
+        'thermal_ringring_major_energy_erg': thermal_ringring_major_energy,
+        'thermal_ringring_minor_energy_erg': thermal_ringring_minor_energy,
+        'thermal_ringring_delta_energy_erg': thermal_ringring_delta_energy,
+        'thermal_ringring_major_mean_erg': thermal_ringring_major_mean,
+        'thermal_ringring_major_std_erg': thermal_ringring_major_std,
+        'thermal_ringring_major_bootstrap_erg': thermal_ringring_major_boot,
+        'thermal_ringring_minor_mean_erg': thermal_ringring_minor_mean,
+        'thermal_ringring_minor_std_erg': thermal_ringring_minor_std,
+        'thermal_ringring_minor_bootstrap_erg': thermal_ringring_minor_boot,
+        'thermal_ringring_delta_mean_erg': thermal_ringring_delta_mean,
+        'thermal_ringring_delta_std_erg': thermal_ringring_delta_std,
+        'thermal_ringring_delta_bootstrap_erg': thermal_ringring_delta_boot,
+        'thermal_ringring_n_galaxies': thermal_ringring_n,
         'effective_mask': result['effective_mask'],
     }
+
+def print_final_diagnostics(all_bin_results):
+    """Print redshift, thermal-energy, 2 arcmin significance, and CAP diagnostics."""
+    print('\n' + '=' * 70)
+    print('FINAL DIAGNOSTICS')
+    print('=' * 70)
+
+    print('\nMedian redshift by stellar-mass bin:')
+    for bin_result in all_bin_results:
+        mass_lo = bin_result.get('mass_lo', np.nan)
+        mass_hi = bin_result.get('mass_hi', np.nan)
+        full = bin_result.get('full_stack', {})
+        median_z = full.get('median_redshift', np.nan) if isinstance(full, dict) else np.nan
+        print(f'  logM ({mass_lo:.1f}, {mass_hi:.1f}]: median z = {median_z:.6f}')
+
+    thermal_outer_radius_arcmin = float(
+        np.sqrt(
+            2.0 * THERMAL_RADIUS_ARCMIN ** 2
+            - CAP_INNER_CUT_ARCMIN ** 2
+        )
+    )
+    print(
+        f'\nThermal energies from ring-ring CAP at theta_d={THERMAL_RADIUS_ARCMIN:g} arcmin '
+        f'({CAP_INNER_CUT_ARCMIN:g}--{THERMAL_RADIUS_ARCMIN:g} arcmin minus '
+        f'{THERMAL_RADIUS_ARCMIN:g}--{thermal_outer_radius_arcmin:.6g} arcmin; '
+        f'outer weight=-N_inner/N_outer; full-disk equivalent) [erg]:'
+    )
+    for bin_result in all_bin_results:
+        mass_lo = bin_result.get('mass_lo', np.nan)
+        mass_hi = bin_result.get('mass_hi', np.nan)
+        full = bin_result.get('full_stack', {})
+        if not isinstance(full, dict) or full.get('n_success', 0) == 0:
+            print(f'  logM ({mass_lo:.1f}, {mass_hi:.1f}]: unavailable')
+            continue
+        major_mean = float(full.get('thermal_ringring_major_mean_erg', np.nan))
+        major_std = float(full.get('thermal_ringring_major_std_erg', np.nan))
+        minor_mean = float(full.get('thermal_ringring_minor_mean_erg', np.nan))
+        minor_std = float(full.get('thermal_ringring_minor_std_erg', np.nan))
+        delta_mean = float(full.get('thermal_ringring_delta_mean_erg', np.nan))
+        delta_std = float(full.get('thermal_ringring_delta_std_erg', np.nan))
+        print(
+            f'  logM ({mass_lo:.1f}, {mass_hi:.1f}]: '
+            f'<E_major> = {major_mean:.6e} +/- {major_std:.6e} erg; '
+            f'<E_minor> = {minor_mean:.6e} +/- {minor_std:.6e} erg; '
+            f'<Delta E_minor-major> = {delta_mean:.6e} +/- {delta_std:.6e} erg'
+        )
+
+    target_radius = 2.0
+    radius_matches = np.where(np.isclose(CAP_RADII_ARCMIN, target_radius))[0]
+    if radius_matches.size == 0:
+        raise ValueError(f'No CAP aperture found at {target_radius:g} arcmin')
+    radius_index = int(radius_matches[0])
+
+    print(f'\nMajor-minor CAP significance at {target_radius:g} arcmin:')
+    for bin_result in all_bin_results:
+        mass_lo = bin_result.get('mass_lo', np.nan)
+        mass_hi = bin_result.get('mass_hi', np.nan)
+        full = bin_result.get('full_stack', {})
+        if not isinstance(full, dict) or full.get('n_success', 0) == 0:
+            print(f'  logM ({mass_lo:.1f}, {mass_hi:.1f}]: unavailable')
+            continue
+        major = float(np.asarray(full['cap_major_mean'])[radius_index])
+        minor = float(np.asarray(full['cap_minor_mean'])[radius_index])
+        sigma_major = float(np.asarray(full['cap_major_std'])[radius_index])
+        sigma_minor = float(np.asarray(full['cap_minor_std'])[radius_index])
+        denom = np.hypot(sigma_major, sigma_minor)
+        significance = abs(major - minor) / denom if denom > 0.0 else np.nan
+        print(f'  logM ({mass_lo:.1f}, {mass_hi:.1f}]: S_delta = {significance:.4f} sigma')
+
+    scale = float(DISPLAY_Y_SCALE)
+    print('\nCAP component diagnostics [10^-6 y arcmin^2]:')
+    for bin_result in all_bin_results:
+        mass_lo = bin_result.get('mass_lo', np.nan)
+        mass_hi = bin_result.get('mass_hi', np.nan)
+        full = bin_result.get('full_stack', {})
+        print(f'\n  logM ({mass_lo:.1f}, {mass_hi:.1f}]')
+        if not isinstance(full, dict) or full.get('n_success', 0) == 0:
+            print('    unavailable')
+            continue
+        major_raw = np.asarray(full['cap_major_raw_mean'], dtype=np.float64) * scale
+        minor_raw = np.asarray(full['cap_minor_raw_mean'], dtype=np.float64) * scale
+        major_sub = np.asarray(full['cap_major_sub_mean'], dtype=np.float64) * scale
+        minor_sub = np.asarray(full['cap_minor_sub_mean'], dtype=np.float64) * scale
+        major_raw_std = np.asarray(full['cap_major_raw_std'], dtype=np.float64) * scale
+        minor_raw_std = np.asarray(full['cap_minor_raw_std'], dtype=np.float64) * scale
+        major_sub_std = np.asarray(full['cap_major_sub_std'], dtype=np.float64) * scale
+        minor_sub_std = np.asarray(full['cap_minor_sub_std'], dtype=np.float64) * scale
+        header = (
+            f"    {'theta [arcmin]':>14}"
+            f"{'Y_raw major':>16}{'SD':>12}"
+            f"{'Y_raw minor':>16}{'SD':>12}"
+            f"{'Y_sub major':>16}{'SD':>12}"
+            f"{'Y_sub minor':>16}{'SD':>12}"
+        )
+        print(header)
+        print('    ' + '-' * (len(header) - 4))
+        for values in zip(
+            CAP_RADII_ARCMIN,
+            major_raw, major_raw_std,
+            minor_raw, minor_raw_std,
+            major_sub, major_sub_std,
+            minor_sub, minor_sub_std,
+        ):
+            radius, y_raw_maj, s_raw_maj, y_raw_min, s_raw_min, y_sub_maj, s_sub_maj, y_sub_min, s_sub_min = values
+            print(
+                f'{radius:18.2f}'
+                f'{y_raw_maj:16.8f}{s_raw_maj:12.8f}'
+                f'{y_raw_min:16.8f}{s_raw_min:12.8f}'
+                f'{y_sub_maj:16.8f}{s_sub_maj:12.8f}'
+                f'{y_sub_min:16.8f}{s_sub_min:12.8f}'
+            )
+
 
 def plot_summary_oriented_selected_ba_histograms(all_bin_results, h5f, out_dir):
     """Plot axis-ratio distributions for the selected oriented sample."""
@@ -1891,6 +2283,16 @@ def main():
     print(f'  Summary path: {SUMMARY_DIR}')
     print(f'  Oriented cache: {CACHE_FILE}')
     print(f'  Liu ring-ring filter: inner cutoff={CAP_INNER_CUT_ARCMIN:g} arcmin; outer weight=-N_inner/N_outer')
+    print('  Galaxy weighting: equal weights (w_i = 1) for stacks, CAP profiles, and thermal energies')
+    thermal_outer_radius_arcmin = np.sqrt(
+        2.0 * THERMAL_RADIUS_ARCMIN ** 2 - CAP_INNER_CUT_ARCMIN ** 2
+    )
+    print(
+        f'  Thermal diagnostic: ring-ring {CAP_INNER_CUT_ARCMIN:g}--'
+        f'{THERMAL_RADIUS_ARCMIN:g} arcmin minus {THERMAL_RADIUS_ARCMIN:g}--'
+        f'{thermal_outer_radius_arcmin:.6g} arcmin, outer weight=-N_inner/N_outer, '
+        f'x{THERMAL_SECTOR_TO_FULL:g} full-disk equivalent'
+    )
     print('  Dust cut: OFF')
     print('  photoPosPlate cross-match: ON')
     print(f'  Axis-ratio cut: 0 < b/a < {BA_MAX}')
@@ -1903,7 +2305,7 @@ def main():
     print('=' * 70)
     h5f, base_fits_idx = build_selection_and_cache()
     try:
-        cache_stamp_valid = h5f['stamp_valid'][:]
+        cache_stamp_valid = h5f['stamp_valid'][:] 
         cache_logm = h5f['logm'][:]
         cache_fits_idx = h5f['fits_idx'][:]
         in_main = np.isin(cache_fits_idx, base_fits_idx)
@@ -1939,6 +2341,7 @@ def main():
         print('Paired bootstrap files for downstream modeling:')
         for export_path in paired_bootstrap_paths:
             print(f'  {export_path}')
+    print_final_diagnostics(all_bin_results)
 
 
 if __name__ == "__main__":
