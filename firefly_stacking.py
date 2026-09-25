@@ -820,8 +820,8 @@ def thermal_energy_from_sector_y(y_sector_arcmin2, redshift):
 
     Uses E_th = (1 + 1/mu_e) * (3/2) * (m_e c^2 / sigma_T)
     * D_A(z)^2 * (arcmin^2 -> sr) * y_sector.
-    No factor of 6 is applied; the returned energy is the energy associated
-    with the measured major- or minor-axis sector itself, in erg.
+    The returned energy is associated with the measured major- or minor-axis
+    sector itself, in erg.
     """
     y_sector_arcmin2 = np.asarray(y_sector_arcmin2, dtype=np.float64)
     redshift = np.asarray(redshift, dtype=np.float64)
@@ -2091,22 +2091,13 @@ def export_paired_sector_bootstraps(all_bin_results, out_dir):
 
     payload = {
         **{key: np.asarray(value) for key, value in _cap_filter_metadata().items()},
-        'format_version': np.asarray(2, dtype=np.int64),
+        'format_version': np.asarray(3, dtype=np.int64),
         'theta_arcmin': np.asarray(CAP_RADII_ARCMIN, dtype=np.float64),
         'mass_bins': np.asarray(MASS_BINS, dtype=np.float64),
         'n_bootstrap_requested': np.asarray(N_BOOT, dtype=np.int64),
         'bootstrap_seed': np.asarray(SEED, dtype=np.int64),
         'display_scale': np.asarray(DISPLAY_Y_SCALE, dtype=np.float64),
         'wedge_half_width_deg': np.asarray(WEDGE_HALF_DEG, dtype=np.float64),
-        'sector_angular_fraction_of_full_circle': np.asarray(
-            4.0 * WEDGE_HALF_DEG / 360.0,
-            dtype=np.float64,
-        ),
-        'sector_full_circle_rescale_factor': np.asarray(
-            360.0 / (4.0 * WEDGE_HALF_DEG),
-            dtype=np.float64,
-        ),
-        'sector_full_circle_rescale_applied': np.asarray(False),
         'major_axis_angle_deg': np.asarray(MAJOR_AXIS_ANGLE, dtype=np.float64),
         'minor_axis_angle_deg': np.asarray(MINOR_AXIS_ANGLE, dtype=np.float64),
         'internal_unit': np.asarray('y arcmin^2'),
@@ -2253,7 +2244,7 @@ def export_paired_sector_bootstraps(all_bin_results, out_dir):
 
     manifest = {
         **_cap_filter_metadata(),
-        'format_version': 2,
+        'format_version': 3,
         'npz_file': os.path.basename(npz_path),
         'internal_unit': 'y arcmin^2',
         'display_scale': float(DISPLAY_Y_SCALE),
@@ -2261,9 +2252,6 @@ def export_paired_sector_bootstraps(all_bin_results, out_dir):
         'theta_arcmin': np.asarray(CAP_RADII_ARCMIN, dtype=float).tolist(),
         'mass_bins': np.asarray(MASS_BINS, dtype=float).tolist(),
         'wedge_half_width_deg': float(WEDGE_HALF_DEG),
-        'sector_angular_fraction_of_full_circle': float(4.0 * WEDGE_HALF_DEG / 360.0),
-        'sector_full_circle_rescale_factor': float(360.0 / (4.0 * WEDGE_HALF_DEG)),
-        'sector_full_circle_rescale_applied': False,
         'joint_vector_order': '[major(theta_1..theta_N), minor(theta_1..theta_N)]',
         'bootstrap_pairing': (
             'Each saved row k uses one common bootstrap resampling of galaxies '
