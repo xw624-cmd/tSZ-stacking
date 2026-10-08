@@ -123,11 +123,17 @@ MASS_WEIGHT_N_BINS = 20
 
 HIST_N_BINS = MASS_WEIGHT_N_BINS
 
-HIST_YLIMS = {'ba_selected': (0.0, 0.8)}
+FRACDEV_HIST_N_BINS = 50
+
+HIST_YLIMS = {'ba_selected': (0.0, 0.8), 'fracdev_selected': (0.0, 1.0)}
 
 BA_HIST_MIN = 0.0
 
 BA_HIST_MAX = 1.0
+
+FRACDEV_HIST_MIN = 0.0
+
+FRACDEV_HIST_MAX = 1.0
 
 STACK_COLOR_PERCENTILE_LOW = 0
 
@@ -358,11 +364,15 @@ HIST_FRACTION_Y_LABEL = '$\\mathrm{Fraction\\ per\\ bin}$'
 
 HIST_BA_X_LABEL = '$b/a$'
 
+HIST_FRACDEV_X_LABEL = '$f_{\\rm deV}$'
+
 HIST_SELECTED_BA_SUPTITLE = ''          #'{\\rm Oriented\\ Sample\\ Axis\\ Ratio\\ Distribution}'
+
+HIST_SELECTED_FRACDEV_SUPTITLE = ''          #'{\\rm Oriented\\ Sample\\ fracDeV\\ Distribution}'
 
 CACHE_FILE = os.path.join(CACHE_DIR, 'stamps.h5')
 
-ORIENTED_PDF_NAMES = ['summary_oriented_full_stack_2x3.pdf', 'summary_oriented_full_stack_cap_profiles_1x3.pdf', 'summary_oriented_sector_cap_correlation_2x3.pdf', 'summary_oriented_hist_ba_selected_1x3.pdf']
+ORIENTED_PDF_NAMES = ['summary_oriented_full_stack_2x3.pdf', 'summary_oriented_full_stack_cap_profiles_1x3.pdf', 'summary_oriented_sector_cap_correlation_2x3.pdf', 'summary_oriented_hist_ba_selected_1x3.pdf', 'summary_oriented_hist_fracdev_selected_1x3.pdf']
 
 
 # Analysis functions
@@ -1576,6 +1586,57 @@ def plot_summary_oriented_selected_ba_histograms(all_bin_results, h5f, out_dir):
     print(f'  [summary histogram: selected b/a] {path}')
 
 
+def plot_summary_oriented_selected_fracdev_histograms(all_bin_results, h5f, out_dir):
+    """Plot r-band fracDeV distributions for the selected oriented sample."""
+    if len(all_bin_results) == 0:
+        return
+    fig, axes = plt.subplots(1, len(MASS_BINS), figsize=(HIST_FIG_WIDTH_PER_COL * len(MASS_BINS), HIST_FIG_HEIGHT), squeeze=False, sharey=True)
+    axes = axes.ravel()
+    fig.subplots_adjust(left=HIST_LEFT, right=HIST_RIGHT, bottom=HIST_BOTTOM, top=HIST_TOP, wspace=HIST_WSPACE)
+    fracdev_all = h5f['fracdev'][:]
+    bins = np.linspace(FRACDEV_HIST_MIN, FRACDEV_HIST_MAX, FRACDEV_HIST_N_BINS + 1)
+    for c, bin_result in enumerate(all_bin_results):
+        ax = axes[c]
+        mass_lo = bin_result.get('mass_lo', MASS_BINS[c][0])
+        mass_hi = bin_result.get('mass_hi', MASS_BINS[c][1])
+        res = bin_result.get('full_stack', {})
+        mask = res.get('effective_mask') if isinstance(res, dict) else None
+        if mask is not None:
+            x = fracdev_all[mask]
+            x = x[np.isfinite(x)]
+            if len(x) > 0:
+                weights = np.ones_like(x, dtype=np.float64) / len(x)
+                ax.hist(x, bins=bins, weights=weights, histtype='step', linewidth=HIST_LINEWIDTH)
+                median_fracdev = float(np.median(x))
+                ax.axvline(
+                    median_fracdev,
+                    linestyle=HIST_MEDIAN_LINESTYLE,
+                    linewidth=HIST_MEDIAN_LINEWIDTH,
+                    color='black',
+                    label=rf'$\mathrm{{Median}}:\ f_{{\rm deV}} = {median_fracdev:.3f}$',
+                )
+                ax.legend(
+                    loc='upper left',
+                    fontsize=HIST_MEDIAN_LABEL_SIZE,
+                    frameon=True,
+                )
+        ax.set_title(_mass_bin_label(mass_lo, mass_hi), fontsize=HIST_PANEL_TITLE_SIZE, pad=HIST_PANEL_TITLE_PAD)
+        ax.tick_params(labelsize=HIST_TICK_LABEL_SIZE)
+        ax.set_xlabel(HIST_FRACDEV_X_LABEL, fontsize=HIST_AXIS_LABEL_SIZE)
+        if c == 0:
+            _set_hist_ylabel(ax, HIST_FRACTION_Y_LABEL)
+        else:
+            ax.tick_params(labelleft=False)
+        ax.set_xlim(FRACDEV_HIST_MIN, FRACDEV_HIST_MAX)
+        ax.set_ylim(*HIST_YLIMS['fracdev_selected'])
+        _prune_touching_x_ticks(ax)
+    fig.suptitle(HIST_SELECTED_FRACDEV_SUPTITLE, fontsize=HIST_SUPTITLE_SIZE, y=HIST_SUPTITLE_Y)
+    path = os.path.join(out_dir, 'summary_oriented_hist_fracdev_selected_1x3.pdf')
+    _savefig(path)
+    plt.close(fig)
+    print(f'  [summary histogram: selected fracDeV] {path}')
+
+
 def export_paired_sector_bootstraps(all_bin_results, out_dir):
     """Save paired sector bootstraps and aligned galaxy metadata for downstream fits."""
     if not EXPORT_PAIRED_SECTOR_BOOTSTRAPS:
@@ -1738,6 +1799,7 @@ def main():
         plot_summary_sector_cap_profiles(all_bin_results, SUMMARY_DIR)
         plot_summary_sector_cap_correlation(all_bin_results, SUMMARY_DIR)
         plot_summary_oriented_selected_ba_histograms(all_bin_results, h5f, SUMMARY_DIR)
+        plot_summary_oriented_selected_fracdev_histograms(all_bin_results, h5f, SUMMARY_DIR)
     finally:
         h5f.close()
     print('\nDone. PDFs written by this pipeline:')
