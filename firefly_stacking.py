@@ -125,7 +125,7 @@ HIST_N_BINS = MASS_WEIGHT_N_BINS
 
 FRACDEV_HIST_N_BINS = 50
 
-HIST_YLIMS = {'ba_selected': (0.0, 0.8), 'fracdev_selected': (0.0, 1.0)}
+HIST_YLIMS = {'ba_selected': (0.0, 0.8), 'fracdev_selected': (0.0, 0.8)}
 
 BA_HIST_MIN = 0.0
 
@@ -1607,19 +1607,6 @@ def plot_summary_oriented_selected_fracdev_histograms(all_bin_results, h5f, out_
             if len(x) > 0:
                 weights = np.ones_like(x, dtype=np.float64) / len(x)
                 ax.hist(x, bins=bins, weights=weights, histtype='step', linewidth=HIST_LINEWIDTH)
-                median_fracdev = float(np.median(x))
-                ax.axvline(
-                    median_fracdev,
-                    linestyle=HIST_MEDIAN_LINESTYLE,
-                    linewidth=HIST_MEDIAN_LINEWIDTH,
-                    color='black',
-                    label=rf'$\mathrm{{Median}}:\ f_{{\rm deV}} = {median_fracdev:.3f}$',
-                )
-                ax.legend(
-                    loc='upper left',
-                    fontsize=HIST_MEDIAN_LABEL_SIZE,
-                    frameon=True,
-                )
         ax.set_title(_mass_bin_label(mass_lo, mass_hi), fontsize=HIST_PANEL_TITLE_SIZE, pad=HIST_PANEL_TITLE_PAD)
         ax.tick_params(labelsize=HIST_TICK_LABEL_SIZE)
         ax.set_xlabel(HIST_FRACDEV_X_LABEL, fontsize=HIST_AXIS_LABEL_SIZE)
@@ -1635,7 +1622,7 @@ def plot_summary_oriented_selected_fracdev_histograms(all_bin_results, h5f, out_
     _savefig(path)
     plt.close(fig)
     print(f'  [summary histogram: selected fracDeV] {path}')
-
+  
 
 def export_paired_sector_bootstraps(all_bin_results, out_dir):
     """Save paired sector bootstraps and aligned galaxy metadata for downstream fits."""
