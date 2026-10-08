@@ -123,7 +123,7 @@ MASS_WEIGHT_N_BINS = 20
 
 HIST_N_BINS = MASS_WEIGHT_N_BINS
 
-FRACDEV_HIST_N_BINS = 50
+FRACDEV_HIST_N_BINS = 20
 
 HIST_YLIMS = {'ba_selected': (0.0, 0.8), 'fracdev_selected': (0.0, 0.8)}
 
@@ -352,11 +352,11 @@ CAP_X_LABEL = '$\\theta_{\\rm d}\\ [{\\rm arcmin}]$'
 
 CAP_Y_LABEL = '$y_{\\mathrm{CAP}}\\ [10^{\\text{\\textminus} 6}\\,\\mathrm{arcmin}^{2}]$'
 
-CAP_NO_SECTOR_DATA_LABEL = '{\\rm no\\ sector\\ CAP\\ data}'
+CAP_NO_SECTOR_DATA_LABEL = '{\\rm no\\ wedge\\ CAP\\ data}'
 
-CAP_MAJOR_SECTOR_LABEL = '{\\rm Major-axis\\ sector}'
+CAP_MAJOR_SECTOR_LABEL = '{\\rm Major-axis\\ wedge}'
 
-CAP_MINOR_SECTOR_LABEL = '{\\rm Minor-axis\\ sector}'
+CAP_MINOR_SECTOR_LABEL = '{\\rm Minor-axis\\ wedge}'
 
 CAP_SECTOR_SUPTITLE = ''          #'{\\rm Oriented-stack\\ CAP\\ Profiles:\\ Major\\ vs.\\ Minor\\ Axis}'
 
@@ -364,7 +364,7 @@ HIST_FRACTION_Y_LABEL = '$\\mathrm{Fraction\\ per\\ bin}$'
 
 HIST_BA_X_LABEL = '$b/a$'
 
-HIST_FRACDEV_X_LABEL = '$f_{\\rm deV}$'
+HIST_FRACDEV_X_LABEL = '$\\text{fracDeV}$'
 
 HIST_SELECTED_BA_SUPTITLE = ''          #'{\\rm Oriented\\ Sample\\ Axis\\ Ratio\\ Distribution}'
 
