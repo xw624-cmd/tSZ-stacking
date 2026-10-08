@@ -2,11 +2,12 @@
 
 """Robustness checks for the 2 arcmin oriented CAP measurement.
 
-The script compares the major- and minor-axis CAP values across alternative
-Compton-y maps, sector half-opening angles, and radio-source selections. The
-same galaxy sample is used within each comparison. It expects
-``oriented_stacking.py`` in the same working directory and uses its catalog
-selection and thumbnail-remapping utilities.
+The script reports the major- and minor-axis CAP values, each with its own
+bootstrap uncertainty, across alternative Compton-y maps, sector
+half-opening angles, and radio-source selections. The same galaxy sample is
+used within each comparison. It expects ``oriented_stacking.py`` in the same
+working directory and uses its catalog selection and thumbnail-remapping
+utilities.
 """
 
 import hashlib
@@ -475,37 +476,28 @@ def _condition_names():
         names.extend([
             f'map:{label}:major',
             f'map:{label}:minor',
-            f'map:{label}:difference',
         ])
     names.extend([
         'angle:30:major',
         'angle:30:minor',
-        'angle:30:difference',
         'angle:45:major',
         'angle:45:minor',
-        'angle:45:difference',
     ])
     return names
 
 
 def build_condition_matrix(map_results, sample_mask):
-    """Build major, minor, and direct minor-major columns for every test."""
+    """Build major and minor CAP columns for every test."""
     columns = []
 
     for label, _ in MAPS:
         r = map_results[label][MAP_TEST_HALF_ANGLE_DEG]
-        major = r['major'][sample_mask]
-        minor = r['minor'][sample_mask]
-        difference = minor - major
-        columns.extend([major, minor, difference])
+        columns.extend([r['major'][sample_mask], r['minor'][sample_mask]])
 
     original_label = MAPS[0][0]
     for half in (30.0, 45.0):
         r = map_results[original_label][half]
-        major = r['major'][sample_mask]
-        minor = r['minor'][sample_mask]
-        difference = minor - major
-        columns.extend([major, minor, difference])
+        columns.extend([r['major'][sample_mask], r['minor'][sample_mask]])
 
     return np.column_stack(columns)
 
@@ -513,8 +505,9 @@ def build_condition_matrix(map_results, sample_mask):
 def bootstrap_matrix(matrix, n_boot, seed, batch_size=BOOTSTRAP_BATCH_SIZE):
     """Bootstrap all columns with common galaxy resamples.
 
-    The minor-major difference is an explicit per-galaxy column, so its
-    uncertainty is obtained by bootstrapping y_minor - y_major directly.
+    Each column's uncertainty is the standard deviation of its bootstrap
+    means. Rows with any non-finite value are dropped so that every column
+    uses the same galaxies.
     """
     matrix = np.asarray(matrix, dtype=np.float64)
     finite = np.all(np.isfinite(matrix), axis=1)
@@ -557,60 +550,38 @@ def format_value(mean, std, scale=1.0):
     return f'{mean:.4f} +/- {std:.4f}'
 
 
-def format_significance(value):
-    return f'{value:.4f} sigma' if np.isfinite(value) else 'nan sigma'
-
-
-def format_pair_result(major, minor, difference, scale=1.0):
-    """Format major, minor, direct-bootstrap difference, and significance."""
-    diff_mean, diff_std = difference
-    significance = (
-        abs(diff_mean) / diff_std
-        if np.isfinite(diff_std) and diff_std > 0.0
-        else np.nan
-    )
+def format_pair_result(major, minor, scale=1.0):
+    """Format the major and minor CAP values with their uncertainties."""
     return (
         format_value(*major, scale=scale),
         format_value(*minor, scale=scale),
-        format_value(diff_mean, diff_std, scale=scale),
-        format_significance(significance),
     )
 
 
 def print_grouped_table(title, row_labels, row_values):
-    """Print three mass-bin groups with major/minor/difference/significance."""
+    """Print three mass-bin groups with major and minor CAP columns."""
     cell_w = 22
     row_w = max(25, max(len(label) for label in row_labels) + 2)
 
     print('\n' + title)
-    print('Major, minor, and minor-major are in 10^-6 y arcmin^2; S_delta is in sigma.')
+    print('Major and minor CAP values are in 10^-6 y arcmin^2.')
 
     header1 = ' ' * row_w
     for lo, hi in ost.MASS_BINS:
         label = f'logM ({lo:.1f}, {hi:.1f}]'
-        header1 += f'{label:^{4 * cell_w}}'
+        header1 += f'{label:^{2 * cell_w}}'
     print(header1)
 
     header2 = f'{"":<{row_w}}'
     for _ in ost.MASS_BINS:
-        header2 += (
-            f'{"Major":^{cell_w}}'
-            f'{"Minor":^{cell_w}}'
-            f'{"Minor-Major":^{cell_w}}'
-            f'{"S_delta":^{cell_w}}'
-        )
+        header2 += f'{"Major":^{cell_w}}{"Minor":^{cell_w}}'
     print(header2)
-    print('-' * (row_w + len(ost.MASS_BINS) * 4 * cell_w))
+    print('-' * (row_w + len(ost.MASS_BINS) * 2 * cell_w))
 
     for label, values in zip(row_labels, row_values):
         line = f'{label:<{row_w}}'
-        for major, minor, difference, significance in values:
-            line += (
-                f'{major:^{cell_w}}'
-                f'{minor:^{cell_w}}'
-                f'{difference:^{cell_w}}'
-                f'{significance:^{cell_w}}'
-            )
+        for major, minor in values:
+            line += f'{major:^{cell_w}}{minor:^{cell_w}}'
         print(line)
 
 
@@ -658,7 +629,7 @@ def main():
         stats = []
 
         print('\nBootstrap sample sizes:')
-        for bin_index, (lo, hi) in enumerate(ost.MASS_BINS):
+        for lo, hi in ost.MASS_BINS:
             mass_mask = (
                 common_valid
                 & np.isfinite(logm)
@@ -680,14 +651,10 @@ def main():
         map_rows = []
         for label, _ in MAPS:
             values = []
-            major_name = f'map:{label}:major'
-            minor_name = f'map:{label}:minor'
-            difference_name = f'map:{label}:difference'
             for bin_stats in stats:
                 values.append(format_pair_result(
-                    bin_stats[major_name],
-                    bin_stats[minor_name],
-                    bin_stats[difference_name],
+                    bin_stats[f'map:{label}:major'],
+                    bin_stats[f'map:{label}:minor'],
                 ))
             map_rows.append(values)
 
@@ -701,20 +668,15 @@ def main():
         angle_rows = []
         angle_labels = []
         for half, rescale in ANGLE_TESTS:
-            values = []
             if half == 15.0:
-                major_name = f'map:{original_label}:major'
-                minor_name = f'map:{original_label}:minor'
-                difference_name = f'map:{original_label}:difference'
+                prefix = f'map:{original_label}'
             else:
-                major_name = f'angle:{int(half)}:major'
-                minor_name = f'angle:{int(half)}:minor'
-                difference_name = f'angle:{int(half)}:difference'
+                prefix = f'angle:{int(half)}'
+            values = []
             for bin_stats in stats:
                 values.append(format_pair_result(
-                    bin_stats[major_name],
-                    bin_stats[minor_name],
-                    bin_stats[difference_name],
+                    bin_stats[f'{prefix}:major'],
+                    bin_stats[f'{prefix}:minor'],
                     scale=rescale,
                 ))
             angle_rows.append(values)
@@ -730,7 +692,7 @@ def main():
         radio_stats = []
         original_15 = map_results[original_label][15.0]
         print('\nRadio-removal sample sizes:')
-        for bin_index, (lo, hi) in enumerate(ost.MASS_BINS):
+        for lo, hi in ost.MASS_BINS:
             in_mass = (
                 common_valid
                 & np.isfinite(logm)
@@ -742,14 +704,10 @@ def main():
                 'FIRST removed': in_mass & ~has_radio,
             }
             bin_stats = {}
-            for selection_index, (label, sample_mask) in enumerate(selections.items()):
-                major_values = original_15['major'][sample_mask]
-                minor_values = original_15['minor'][sample_mask]
-                difference_values = minor_values - major_values
+            for label, sample_mask in selections.items():
                 matrix = np.column_stack([
-                    major_values,
-                    minor_values,
-                    difference_values,
+                    original_15['major'][sample_mask],
+                    original_15['minor'][sample_mask],
                 ])
                 means, stds, n_used = bootstrap_matrix(
                     matrix,
@@ -759,7 +717,6 @@ def main():
                 bin_stats[label] = {
                     'major': (means[0], stds[0]),
                     'minor': (means[1], stds[1]),
-                    'difference': (means[2], stds[2]),
                     'n': n_used,
                 }
             radio_stats.append(bin_stats)
@@ -776,7 +733,6 @@ def main():
                 values.append(format_pair_result(
                     bin_stats[label]['major'],
                     bin_stats[label]['minor'],
-                    bin_stats[label]['difference'],
                 ))
             radio_rows.append(values)
 
