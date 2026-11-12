@@ -66,16 +66,16 @@ MAJOR_AXIS_ANGLE = 90.0
 
 MINOR_AXIS_ANGLE = 0.0
 
-CAP_N_AP = 7
+CAP_N_AP = 6
 
-CAP_AP_MIN_ARCMIN = 2.0
+CAP_AP_MIN_ARCMIN = 1.0
 
-CAP_AP_MAX_ARCMIN = 8.0
+CAP_AP_MAX_ARCMIN = 6.0
 
 CAP_RADII_ARCMIN = np.linspace(CAP_AP_MIN_ARCMIN, CAP_AP_MAX_ARCMIN, CAP_N_AP)
 
 # Inner cutoff for the ring-ring CAP filter.
-CAP_INNER_CUT_ARCMIN = 1.0
+CAP_INNER_CUT_ARCMIN = 0
 
 MASS_BINS = [(11.0, 11.4), (11.4, 11.7), (11.7, 12.0)]
 
@@ -91,7 +91,7 @@ Z_MAX = 0.6
 
 RADIO_ONLY = False
 
-EXCLUDE_RADIO = False
+EXCLUDE_RADIO = True
 
 FIRST_MATCH_ARCSEC = 60.0
 
@@ -352,11 +352,11 @@ CAP_X_LABEL = '$\\theta_{\\rm d}\\ [{\\rm arcmin}]$'
 
 CAP_Y_LABEL = '$y_{\\mathrm{CAP}}\\ [10^{\\text{\\textminus} 6}\\,\\mathrm{arcmin}^{2}]$'
 
-CAP_NO_SECTOR_DATA_LABEL = '{\\rm no\\ wedge\\ CAP\\ data}'
+CAP_NO_SECTOR_DATA_LABEL = '{\\rm no\\ CAP\\ data}'
 
-CAP_MAJOR_SECTOR_LABEL = '{\\rm Major-axis\\ wedge}'
+CAP_MAJOR_SECTOR_LABEL = '{\\rm Major-axis}'
 
-CAP_MINOR_SECTOR_LABEL = '{\\rm Minor-axis\\ wedge}'
+CAP_MINOR_SECTOR_LABEL = '{\\rm Minor-axis}'
 
 CAP_SECTOR_SUPTITLE = ''          #'{\\rm Oriented-stack\\ CAP\\ Profiles:\\ Major\\ vs.\\ Minor\\ Axis}'
 
