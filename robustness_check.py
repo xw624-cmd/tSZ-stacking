@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Robustness checks for the 2 arcmin oriented CAP measurement.
+"""Robustness checks for the oriented CAP measurement.
 
 The script reports the major- and minor-axis CAP values, each with its own
 bootstrap uncertainty, across alternative Compton-y maps, sector
