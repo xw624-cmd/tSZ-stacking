@@ -605,6 +605,7 @@ def main():
         logm = catalog['logm'][selected_idx]
         pa = catalog['pa'][selected_idx]
         has_radio = catalog['has_radio'][selected_idx]
+        fiducial_base = common_valid & ~has_radio
 
         map_results = {}
         original_label = MAPS[0][0]
@@ -631,7 +632,7 @@ def main():
         print('\nBootstrap sample sizes:')
         for lo, hi in ost.MASS_BINS:
             mass_mask = (
-                common_valid
+                fiducial_base
                 & np.isfinite(logm)
                 & (logm > lo)
                 & (logm <= hi)
@@ -700,8 +701,8 @@ def main():
                 & (logm <= hi)
             )
             selections = {
-                'All galaxies': in_mass,
-                'FIRST removed': in_mass & ~has_radio,
+                'All galaxies (incl. radio)': in_mass,
+                'Radio removed (fiducial)': in_mass & ~has_radio,
             }
             bin_stats = {}
             for label, sample_mask in selections.items():
@@ -722,12 +723,12 @@ def main():
             radio_stats.append(bin_stats)
             print(
                 f'  logM ({lo:.1f}, {hi:.1f}]: '
-                f'all={bin_stats["All galaxies"]["n"]:,}, '
-                f'FIRST removed={bin_stats["FIRST removed"]["n"]:,}'
+                f'all={bin_stats["All galaxies (incl. radio)"]["n"]:,}, '
+                f'radio removed={bin_stats["Radio removed (fiducial)"]["n"]:,}'
             )
 
         radio_rows = []
-        for label in ('All galaxies', 'FIRST removed'):
+        for label in ('All galaxies (incl. radio)', 'Radio removed (fiducial)'):
             values = []
             for bin_stats in radio_stats:
                 values.append(format_pair_result(
@@ -739,7 +740,7 @@ def main():
         print_grouped_table(
             f'RADIO ROBUSTNESS: theta_d = {TEST_RADIUS_ARCMIN:g} arcmin, '
             'half-opening angle = 15 deg (original map; no angular rescaling)',
-            ['All galaxies', 'FIRST removed'],
+            ['All galaxies (incl. radio)', 'Radio removed (fiducial)'],
             radio_rows,
         )
 
